@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1
-RUN groupadd -g 999 docker
+RUN groupadd -g 998 docker
 COPY entrypoint.sh /entrypoint.sh
 RUN mkdir /app
 ADD runner.py /app
