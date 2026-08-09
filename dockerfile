@@ -4,6 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ssh \
     gosu \
+    git \
     ca-certificates \
     libkrb5-3 \
     zlib1g \
