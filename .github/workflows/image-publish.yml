@@ -5,6 +5,7 @@ on:
     tags:
       - 'v*.*.*'
       - 'v*'
+    branches: ["main"]
     
 permissions:
   contents: read
