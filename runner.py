@@ -19,6 +19,11 @@ def install_runner():
     if not os.path.exists("github-runner"):
         os.makedirs("github-runner")
     os.chdir("github-runner")
+
+    if os.path.exists("config.sh"):
+        print("Runner already extracted.")
+        return True
+    
     url = "https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz"
     output_file = "actions-runner-linux.tar.gz"
     print("Downloading runner...")
@@ -31,34 +36,64 @@ def install_runner():
             tar.extractall(path=".", filter='data')
         if os.path.exists("config.sh"):
             print("Runner extracted successfully.")
+            os.remove(output_file)
             return True
 
 def config_runner():
-    token = os.environ.get("TOKEN")
-    repo = f"https://github.com/{os.environ.get("REPO")}"
-
-    if os.environ.get("RUNNER_NAME", False):
-        runner_name = os.environ.get("RUNNER_NAME")
-        config_command = f"/bin/bash ./config.sh --url {repo} --token {token} --name {runner_name} --replace"
-    else:
-        config_command = f"/bin/bash ./config.sh --url {repo} --token {token} --replace"
-
-    print("Configuring runner...")
-    subprocess.run(config_command, shell=True)
-    print("Runner configured successfully.")
-
-    if os.environ.get("REMOVE_RUNNER", "false") == "true":
-        print("Removing runner...")
-        config_command = f"/bin/bash ./config.sh remove --token {token}"
-        subprocess.run(config_command, shell=True)
-        print("Runner removed successfully.")
-        return False
+    if is_configured():
+        print("Runner is already configured!")
+        return True
     
+    token = os.environ.get("TOKEN")
+    repo = f'https://github.com/{os.environ.get("REPO")}'
+
+    config_cmd = [
+        "/bin/bash",
+        "./config.sh",
+        "--url",
+        repo,
+        "--token",
+        token,
+        "--replace",
+    ]
+    if os.environ.get("RUNNER_NAME"):
+        config_cmd.extend(["--name", os.environ.get("RUNNER_NAME")])
+    try:
+        print("Configuring runner...")
+        subprocess.run(config_cmd, check=True)
+        print("Runner configured successfully.")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Configuration failed with error code: {e.returncode}")
+        return False
+
+    if os.environ.get("REMOVE_RUNNER", "false").lower() == "true":
+        print("Removing runner...")
+        remove_cmd = [
+            "/bin/bash",
+            "./config.sh",
+            "remove",
+            "--token",
+            token,
+        ]
+        try:
+            subprocess.run(remove_cmd, check=True)
+            print("Runner removed successfully.")
+            return False
+        except subprocess.CalledProcessError as e:
+            print(f"Removing runner failed with error code: {e.returncode}")
     return True
 
 def run_runner():
     print("Starting runner...")
-    subprocess.run("/bin/bash ./run.sh", shell=True)
+    try:
+        subprocess.run(["/bin/bash", "./run.sh"])
+    except Exception as e:
+        print(f"Error while running the Runner: {e}")
+        exit(1)
+
+def is_configured():
+    return os.path.exists(".runner")
 
 if __name__ == "__main__":
     try:
@@ -72,7 +107,7 @@ if __name__ == "__main__":
                     print("Runner configuration failed or runner was removed. Exiting.")
                     exit(1)
                 run_runner()
-                
+
     except KeyboardInterrupt:
         print("Script interrupted by user. Exiting.")
         exit(0)

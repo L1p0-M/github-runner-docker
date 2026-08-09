@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libicu-dev \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PYTHONUNBUFFERED=1
 COPY entrypoint.sh /entrypoint.sh
 RUN mkdir /app
 ADD runner.py /app
