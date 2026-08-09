@@ -13,14 +13,19 @@ fi
 
 if [ -S /var/run/docker.sock ]; then
     DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
-    if ! getent group "$DOCKER_GID" >/dev/null; then
-        groupadd docker
-        groupmod -g "$DOCKER_GID" docker 2>/dev/null || true
-        usermod -aG docker runner
-    else
-        EXISTING_GROUP=$(getent group "$DOCKER_GID" | cut -d: -f1)
-        usermod -aG "$EXISTING_GROUP" runner
+    DOCKER_GROUP=$(getent group "$DOCKER_GID" | cut -d: -f1)
+    
+    if [ -z "$DOCKER_GROUP" ]; then
+        if getent group docker >/dev/null; then
+            groupmod -g "$DOCKER_GID" docker
+            DOCKER_GROUP="docker"
+        else
+            groupadd -g "$DOCKER_GID" dockersock
+            DOCKER_GROUP="dockersock"
+        fi
     fi
+    
+    usermod -aG "$DOCKER_GROUP" runner
 fi
 
 chown -R runner:runner /app
