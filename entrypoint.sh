@@ -10,5 +10,6 @@ if ! id -u runner >/dev/null 2>&1; then
     useradd -u "$PUID" -g "$PGID" -m -s /bin/bash runner
 fi
 
+usermod -aG docker runner
 chown -R runner:runner /app
 exec gosu runner "$@"
