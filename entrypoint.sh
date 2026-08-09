@@ -14,6 +14,7 @@ fi
 if [ -S /var/run/docker.sock ]; then
     DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
     if ! getent group "$DOCKER_GID" >/dev/null; then
+        groupadd docker
         groupmod -g "$DOCKER_GID" docker 2>/dev/null || true
         usermod -aG docker runner
     else
