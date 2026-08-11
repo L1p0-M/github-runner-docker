@@ -42,7 +42,7 @@ services:
       - TOKEN=*your selfhosted github runner token*
       - REPO=exampleuser/examplerepo
     volumes:
-      - ./docker_files:/var/lib/docker # Bind mount docker folder,because we dont want                                        # to repull the action images at every restart
+      - ./docker_files:/var/lib/docker # Bind mount docker folder,because we dont want to repull the action images at every restart
 ```
 
 ### Removing
