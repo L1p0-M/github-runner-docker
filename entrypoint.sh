@@ -1,6 +1,7 @@
 #!/bin/bash
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
+PACKAGES=${PACKAGES:-}
 set -e
 
 echo "Adding runner user.."
@@ -28,7 +29,23 @@ if ! docker info >/dev/null 2>&1; then
     exit 1
 fi
 
+# Fix permission for docker group... Just to be sure
+if [ -S /var/run/docker.sock ]; then
+    chown root:docker /var/run/docker.sock
+fi
+
 echo "Docker daemon is running"
 
+if [ -n "$PACKAGES" ]; then
+    echo "Installing user packages: $PACKAGES"
+    if apt-get update && apt-get install -y --no-install-recommends $PACKAGES; then
+        echo "Packages installed successfully."
+        rm -rf /var/lib/apt/lists/*
+    else
+        echo "Error while trying to install user packages!!"
+    fi
+else
+    echo "No need to install any extra package, continue"
+fi
 chown -R runner:runner /app
 exec gosu runner "$@"
