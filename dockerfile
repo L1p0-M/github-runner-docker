@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnuma1 \
     libicu-dev \
     rsync \
+    unzip \
     gettext-base \
     iptables \
     && install -m 0755 -d /etc/apt/keyrings \
