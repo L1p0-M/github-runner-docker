@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libicu-dev \
     rsync \
     unzip \
+    nodejs \
+    npm \
     gettext-base \
     iptables \
     && install -m 0755 -d /etc/apt/keyrings \
