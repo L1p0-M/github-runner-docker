@@ -34,8 +34,9 @@ jobs:
       with:
         images: ghcr.io/l1p0-m/github-runner-docker
         tags: |
-          type=ref,event=tag
-          type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+            type=ref,event=tag
+            type=raw,value=latest
+            type=raw,value={{ref}}-{{sha}}
 
     - name: Build and push
       uses: docker/build-push-action@v6
