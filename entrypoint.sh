@@ -19,12 +19,15 @@ fi
 
 usermod -aG docker runner
 
-echo "Cleaning up Docker PID and socket files..."
+echo "Cleaning up old Docker processes and state..."
+pkill -9 dockerd || true
+pkill -9 containerd || true
+sleep 1
+
 rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid
+
 echo "Starting Docker daemon..."
-if ! pgrep -x "dockerd" >/dev/null; then
-    dockerd > /var/log/dockerd.log 2>&1 &
-fi
+dockerd > /var/log/dockerd.log 2>&1 &
 
 timeout 30 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
 
