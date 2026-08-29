@@ -16,17 +16,17 @@ A lightweight, highly secure Docker-based self-hosted GitHub Actions runner with
 
 ## 🔄 Architecture & Ephemeral Lifecycle
 
-+------------------------------------------------------------------------+
-|                        Docker Container Loop                           |
-|                                                                        |
-|  1. Fetch fresh registration token from GitHub API                     |
-|  2. Execute ./config.sh --ephemeral                                    |
-|  3. Start ./run.sh and listen for incoming GitHub Actions job          |
-|  4. Execute Workflow Job (e.g. Terraform plan, Docker build)           |
-|  5. Job Complete -> GitHub deregisters runner & cleans .runner config  |
-|  6. Process exits (Container stops)                                    |
-|  7. Docker --restart unless-stopped spawns a NEW pristine container    |
-+------------------------------------------------------------------------+
+```mermaid
+flowchart TD
+    A[Docker Container Starts] --> B[Fetch Registration Token]
+    B --> C[Execute ./config.sh --ephemeral]
+    C --> D[Start ./run.sh & Wait for Job]
+    D --> E[Execute Workflow Job]
+    E --> F[Job Complete ➔ GitHub Deregisters Runner & Cleans Config]
+    F --> G[Process Exits & Container Stops]
+    G --> H[Docker restart: unless-stopped Spawns Fresh Container]
+    H --> A
+```
 
 ---
 
