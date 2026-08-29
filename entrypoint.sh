@@ -38,7 +38,7 @@ echo "Docker daemon is running"
 
 if [ -n "$PACKAGES" ]; then
     echo "Installing user packages: $PACKAGES"
-    if apt-get update && apt-get install -y --no-install-recommends $PACKAGES; then
+    if apt-get update && apt-get install -y --no-install-recommends $(echo "$PACKAGES" | tr ',' ' '); then
         echo "Packages installed successfully."
         rm -rf /var/lib/apt/lists/*
     else

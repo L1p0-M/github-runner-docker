@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ssh \
     gosu \
     git \
+    tini \
     ca-certificates \
     libkrb5-3 \
     zlib1g \
@@ -38,6 +39,6 @@ WORKDIR /app
 RUN mkdir github-runner
 
 RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 
 CMD ["python", "/app/runner.py"]

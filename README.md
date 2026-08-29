@@ -1,49 +1,94 @@
-# Self-Hosted GitHub Actions Runner Container
+# 🐙 Ephemeral Self-Hosted GitHub Actions Runner Container
 
-A lightweight, Docker-based self-hosted GitHub Actions runner supporting **Docker-in-Docker (DiD) actions**.
-
-## Features
-
-* **Base:** Python 3.13-slim
-* **Docker CLI & Buildx** pre-installed
-* **Security:** Drops root privileges using `gosu` to run as the `runner` user
-* **Included tools:** `git`, `curl`, `rsync`, `ssh`, `gosu`, `docker`, `envsubst`
+A lightweight, highly secure Docker-based self-hosted GitHub Actions runner with Docker-in-Docker (DinD) support, designed specifically for ephemeral execution (auto-deregistration after a single job).
 
 ---
 
+## 🚀 Key Features
 
-## Quick Start
-### Docker Run
-```Bash
+* **Ephemeral Engine:** Configured with --ephemeral mode. After executing 1 job, the runner automatically unregisters from GitHub, cleans up runtime secrets, and terminates (ensuring a 100% clean state for every CI/CD run).
+* **Docker-in-Docker (DinD):** Native support for running Docker commands (`docker build`, `docker run`, `docker-compose`) inside Actions workflows.
+* **Security First:** Drops root privileges on startup using `gosu` to execute tasks safely under an unprivileged runner user.
+* **Dynamic Package Injection:** Install extra APT packages on-the-fly at runtime without rebuilding the Docker image.
+* **Packages Included:** Pre-packaged with essential DevOps tools: `git`, `curl`, `rsync`, `ssh`, `envsubst`, `nodejs`, `npm`, `Docker CLI`, and `Buildx`.
+
+---
+
+## 🔄 Architecture & Ephemeral Lifecycle
+
++------------------------------------------------------------------------+
+|                        Docker Container Loop                           |
+|                                                                        |
+|  1. Fetch fresh registration token from GitHub API                     |
+|  2. Execute ./config.sh --ephemeral                                    |
+|  3. Start ./run.sh and listen for incoming GitHub Actions job          |
+|  4. Execute Workflow Job (e.g. Terraform plan, Docker build)           |
+|  5. Job Complete -> GitHub deregisters runner & cleans .runner config  |
+|  6. Process exits (Container stops)                                    |
+|  7. Docker --restart unless-stopped spawns a NEW pristine container    |
++------------------------------------------------------------------------+
+
+---
+
+## ⚙️ Environment Variables
+
+| Variable | Required | Default | Description |
+| :--- | :---: | :---: | :--- |
+| TOKEN | Yes | - | Personal Access Token (PAT) or Fine-Grained Token with repo / actions:read_write permissions to request registration tokens. |
+| REPO | Yes | - | Target GitHub repository in owner/repository format (e.g. L1p0-M/Homelab). |
+| RUNNER_NAME | No | auto-generated | Custom name displayed in GitHub's Settings -> Actions -> Runners tab. |
+| PUID | No | 1000 | User ID (UID) assigned to the runner user inside the container for file permission alignment. |
+| PGID | No | 1000 | Group ID (GID) assigned to the runner user inside the container. |
+| PACKAGES | No | - | Comma-separated list of additional Debian packages to install via apt-get at container startup (e.g., wget, jq, htop). |
+
+---
+
+## 🛠️ Quick Start
+
+### 1. Docker Run
+
+```bash
 docker run -d \
   --privileged \
   --name github-runner \
   --restart unless-stopped \
-  -v ./docker_files:/var/lib/docker \ 
-  -e TOKEN=*your selfhosted github runner token* \
-  -e REPO=exampleuser/examplerepo \
+  -e TOKEN="ghp_yourPersonalAccessTokenHere" \
+  -e REPO="L1p0-M/Homelab" \
+  -e RUNNER_NAME="pve-ephemeral-runner" \
   -e PUID=1000 \
   -e PGID=1000 \
-  -e RUNNER_NAME=selfhosted_runner \
+  -e PACKAGES="wget, jq, gettext-base" \
   ghcr.io/l1p0-m/github-runner-docker:latest
 ```
-### Docker Compose
-```YAML
+
+### 2. Docker Compose (Recommended)
+
+Create a docker-compose.yml file:
+
+```yaml
 services:
   github-runner:
     image: ghcr.io/l1p0-m/github-runner-docker:latest
     container_name: github-runner
-    privileged: true  # Needs to be set for docker-in-docker to work!
+    privileged: true # Required for Docker-in-Docker functionality!
     restart: unless-stopped
     environment:
-      - RUNNER_NAME=selfhosted_runner
+      - TOKEN=${GITHUB_PAT_TOKEN}
+      - REPO=L1p0-M/Homelab
+      - RUNNER_NAME=pve-ephemeral-runner
       - PUID=1000
       - PGID=1000
-      - TOKEN=*your selfhosted github runner token*
-      - REPO=exampleuser/examplerepo
-    volumes:
-      - ./docker_files:/var/lib/docker # Bind mount docker folder,because we dont want to repull the action images at every restart
+      - PACKAGES=wget, jq, gettext-base
 ```
 
-### Removing
-To remove the runner, set the `REMOVE_RUNNER` environment variable to `true` and start the container!
+Start the service:
+```bash
+docker compose up -d
+```
+
+---
+
+## 🛡️ Security & Permissions
+
+* **Privileged Mode:** The --privileged flag is required exclusively to initialize the Docker daemon inside the container for DinD workloads.
+* **Process Isolation:** The main entrypoint drops privileges immediately after setting up environment dependencies and runs the GitHub Actions runner binary strictly as a **non-root runner user** (PUID/PGID).

@@ -3,6 +3,7 @@ import urllib.request
 import shutil
 import tarfile
 import subprocess
+import json
 
 
 def check_env():
@@ -44,7 +45,10 @@ def config_runner():
         print("Runner is already configured!")
         return True
     
-    token = os.environ.get("TOKEN")
+    github_token = os.environ.get("TOKEN")
+    owner, repo = os.environ.get("REPO").split("/")
+    token = get_token(owner=owner, repo=repo, token=github_token)
+
     repo = f'https://github.com/{os.environ.get("REPO")}'
 
     config_cmd = [
@@ -55,6 +59,7 @@ def config_runner():
         "--token",
         token,
         "--replace",
+        "--ephemeral",
     ]
     if os.environ.get("RUNNER_NAME"):
         config_cmd.extend(["--name", os.environ.get("RUNNER_NAME")])
@@ -62,27 +67,11 @@ def config_runner():
         print("Configuring runner...")
         subprocess.run(config_cmd, check=True)
         print("Runner configured successfully.")
+        return True
 
     except subprocess.CalledProcessError as e:
         print(f"Configuration failed with error code: {e.returncode}")
         return False
-
-    if os.environ.get("REMOVE_RUNNER", "false").lower() == "true":
-        print("Removing runner...")
-        remove_cmd = [
-            "/bin/bash",
-            "./config.sh",
-            "remove",
-            "--token",
-            token,
-        ]
-        try:
-            subprocess.run(remove_cmd, check=True)
-            print("Runner removed successfully.")
-            return False
-        except subprocess.CalledProcessError as e:
-            print(f"Removing runner failed with error code: {e.returncode}")
-    return True
 
 def run_runner():
     print("Starting runner...")
@@ -94,6 +83,32 @@ def run_runner():
 
 def is_configured():
     return os.path.exists(".runner")
+
+def get_token(owner, repo, token):
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/runners/registration-token"
+
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "Content-Type": "application/json",
+    }
+
+    req = urllib.request.Request(url, headers=headers, method="POST")
+
+    try:
+        with urllib.request.urlopen(req) as response:
+            status_code = response.getcode()
+            response_body = response.read().decode("utf-8")
+            if status_code == 201:
+                print(f"Token is valid until: {json.loads(response_body).get("expires_at")}")
+                return json.loads(response_body).get("token")
+            else:
+                raise RuntimeError
+
+    except Exception as e:
+        print(f"Error getting token: {e}")
+
 
 if __name__ == "__main__":
     try:
