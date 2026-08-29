@@ -36,7 +36,7 @@ jobs:
         tags: |
             type=ref,event=tag
             type=raw,value=latest
-            type=raw,value={{ref}}-{{sha}}
+            type=raw,value=${{ github.ref_name }}-${{ github.sha }}
 
     - name: Build and push
       uses: docker/build-push-action@v6
