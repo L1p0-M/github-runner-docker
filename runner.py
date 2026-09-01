@@ -25,7 +25,7 @@ def install_runner():
         print("Runner already extracted.")
         return True
     
-    url = "https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz"
+    url = "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.336.0.tar.gz"
     output_file = "actions-runner-linux.tar.gz"
     print("Downloading runner...")
     with urllib.request.urlopen(url) as response, open(output_file, 'wb') as out_file:
@@ -110,8 +110,22 @@ def get_token(owner, repo, token):
         print(f"Error getting token: {e}")
 
 
+def cleanup_docker():
+    try:
+        result = subprocess.run(
+            ["docker", "system", "prune", "-af", "--volumes"], check=True)
+    except Exception as e:
+        print(f"Error during Docker cleanup: {e}")
+        exit(1)
+
 if __name__ == "__main__":
     try:
+        try:
+            subprocess.run(["docker", "--version"], check=True)
+        except Exception as e:
+            print(f"Docker is not installed or not running: {e}")
+            exit(1)
+
         env_is_set = check_env()
         if env_is_set:
             print("Environment variables are set. Proceeding with the script.")
@@ -126,4 +140,13 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Script interrupted by user. Exiting.")
         exit(0)
+
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        exit(1)
+
+    finally:
+        print("Cleaning up Docker resources...")
+        cleanup_docker()
+        print("Cleanup complete.")
 

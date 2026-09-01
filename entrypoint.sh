@@ -27,7 +27,7 @@ sleep 1
 rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid
 
 echo "Starting Docker daemon..."
-dockerd > /var/log/dockerd.log 2>&1 &
+dockerd --storage-driver=fuse-overlayfs > /var/log/dockerd.log 2>&1 &
 
 timeout 30 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
 
