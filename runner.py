@@ -25,7 +25,7 @@ def install_runner():
         print("Runner already extracted.")
         return True
     
-    url = "https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.336.0.tar.gz"
+    url = "https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz"
     output_file = "actions-runner-linux.tar.gz"
     print("Downloading runner...")
     with urllib.request.urlopen(url) as response, open(output_file, 'wb') as out_file:
@@ -60,6 +60,7 @@ def config_runner():
         token,
         "--replace",
         "--ephemeral",
+        "--disableupdate",
     ]
     if os.environ.get("RUNNER_NAME"):
         config_cmd.extend(["--name", os.environ.get("RUNNER_NAME")])
@@ -112,8 +113,7 @@ def get_token(owner, repo, token):
 
 def cleanup_docker():
     try:
-        result = subprocess.run(
-            ["docker", "system", "prune", "-af", "--volumes"], check=True)
+        subprocess.run(["docker", "system", "prune", "-af", "--volumes"], check=True)
     except Exception as e:
         print(f"Error during Docker cleanup: {e}")
         exit(1)
@@ -135,7 +135,15 @@ if __name__ == "__main__":
                 if not configured:
                     print("Runner configuration failed or runner was removed. Exiting.")
                     exit(1)
-                run_runner()
+                try:
+                    run_runner()
+                except Exception as e:
+                    print(f"Error while running the Runner: {e}")
+                    exit(1)
+                finally:
+                    print("Cleaning up Docker resources...")
+                    cleanup_docker()
+                    print("Cleanup complete.")
 
     except KeyboardInterrupt:
         print("Script interrupted by user. Exiting.")
@@ -144,9 +152,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         exit(1)
-
-    finally:
-        print("Cleaning up Docker resources...")
-        cleanup_docker()
-        print("Cleanup complete.")
 
