@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     docker-ce \
     containerd.io \
     docker-buildx-plugin \
+    docker-compose-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1
