@@ -6,6 +6,10 @@ on:
       - 'v*.*.*'
       - 'v*'
     branches: ["main"]
+    paths:
+      - 'entrypoint.sh'
+      - 'dockerfile'
+      - 'runner.py'
     
 permissions:
   contents: read
