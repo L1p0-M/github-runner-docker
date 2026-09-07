@@ -56,4 +56,9 @@ else
     echo "No need to install any extra package, continue"
 fi
 chown -R runner:runner /app
+
+mkdir -p /home/runner/.local/bin
+export PATH="/home/runner/.local/bin:$PATH"
+chown -R runner:runner /home/runner/.local
+
 exec gosu runner "$@"
