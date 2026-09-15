@@ -29,4 +29,11 @@
       "datasourceTemplate": "github-releases"
    }
  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["actions/runner"],
+      "groupName": "Runner",
+      "commitMessageTopic": "Runner: {{{depName}}}"
+    },
+  ]
 }
