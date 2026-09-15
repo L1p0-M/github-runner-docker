@@ -2,11 +2,9 @@ name: Docker Image CI
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
-      - 'v*'
     branches: ["main"]
     paths:
+      - 'VERSION'
       - 'entrypoint.sh'
       - 'dockerfile'
       - 'runner.py'
@@ -31,6 +29,12 @@ jobs:
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
+
+    - name: Read version from file
+      id: get_version
+      run: |
+        VERSION=$(cat ./VERSION)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
     
     - name: Docker metadata
       id: meta
@@ -38,9 +42,9 @@ jobs:
       with:
         images: ghcr.io/l1p0-m/github-runner-docker
         tags: |
-            type=ref,event=tag
-            type=raw,value=latest
-            type=raw,value=${{ github.ref_name }}-${{ github.sha }}
+          type=raw,value=latest
+          type=raw,value=${{ steps.get_version.outputs.version }}
+          type=raw,value=${{ steps.get_version.outputs.version }}-${{ github.sha }}
 
     - name: Build and push
       uses: docker/build-push-action@v7
