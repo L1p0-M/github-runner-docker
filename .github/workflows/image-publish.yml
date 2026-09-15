@@ -33,7 +33,7 @@ jobs:
     - name: Read version from file
       id: get_version
       run: |
-        VERSION=$(cat ./VERSION)
+        VERSION=$(cat VERSION)
         echo "version=$VERSION" >> $GITHUB_OUTPUT
     
     - name: Docker metadata
