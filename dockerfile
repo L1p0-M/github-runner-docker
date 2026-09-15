@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # renovate: datasource=github-releases depName=actions/runner
-ARG RUNNER_VERSION=2.336.0
+ARG RUNNER_VERSION=2.337.0
 ENV RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
 
 ENV PYTHONUNBUFFERED=1
