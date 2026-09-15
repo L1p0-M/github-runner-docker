@@ -4,7 +4,9 @@
   "customManagers": [
    {
      "customType": "regex",
-     "fileMatch": ["(^|/)Dockerfile$"],
+     "managerFilePatterns": [
+     "/(^|/)Dockerfile$/"
+    ],
      "matchStrings": [
        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\nARG RUNNER_VERSION=(?<currentValue>.*)"
      ],
