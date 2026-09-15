@@ -1,16 +1,20 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "enabledManagers": [
+      "dockerfile",
+      "github-actions",
+      "custom.regex",
+  ],
   "customManagers": [
    {
      "customType": "regex",
      "managerFilePatterns": [
-     "/(^|/)Dockerfile$/"
+     "/^dockerfile$/"
     ],
      "matchStrings": [
        "# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\nARG RUNNER_VERSION=(?<currentValue>.*)"
      ],
-     "versioningTemplate": "semver"
     }
   ]
 }
