@@ -22,7 +22,7 @@
         "/^VERSION$/"
       ],
       "matchStrings": [
-        "^(?<currentValue>\\d+\\.\\d+(\\.\\d+)?)\\s*$"
+        "v(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
       "depNameTemplate": "ghcr.io/l1p0-m/github-runner-docker",
       "packageNameTemplate": "actions/runner",
