@@ -5,6 +5,7 @@
       "dockerfile",
       "github-actions",
       "custom.regex",
+      "custom.version",
   ],
   "customManagers": [
    {
