@@ -8,6 +8,7 @@ on:
       - 'entrypoint.sh'
       - 'dockerfile'
       - 'runner.py'
+  workflow_dispatch:
     
 permissions:
   contents: read
