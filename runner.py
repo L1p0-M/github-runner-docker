@@ -24,8 +24,8 @@ def install_runner():
     if os.path.exists("config.sh"):
         print("Runner already extracted.")
         return True
-    
-    url = "https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz"
+   
+    url = os.environ.get("RUNNER_URL", "https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz")
     output_file = "actions-runner-linux.tar.gz"
     print("Downloading runner...")
     with urllib.request.urlopen(url) as response, open(output_file, 'wb') as out_file:
