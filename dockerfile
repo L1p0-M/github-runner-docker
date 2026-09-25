@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rsync \
     unzip \
     nodejs \
+    wget \
     npm \
     gettext-base \
     iptables \
