@@ -4,6 +4,7 @@ import shutil
 import tarfile
 import subprocess
 import json
+from pathlib import Path as pathlibpath
 
 
 def check_env():
@@ -118,6 +119,17 @@ def cleanup_docker():
         print(f"Error during Docker cleanup: {e}")
         exit(1)
 
+def cleanup_tmp():
+    tmp_path = pathlibpath("/tmp")
+    for item in tmp_path.iterdir():
+        try:
+            if item.is_file() or item.is_symlink():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+        except PermissionError:
+            pass
+
 if __name__ == "__main__":
     try:
         try:
@@ -143,6 +155,7 @@ if __name__ == "__main__":
                 finally:
                     print("Cleaning up Docker resources...")
                     cleanup_docker()
+                    cleanup_tmp()
                     print("Cleanup complete.")
 
     except KeyboardInterrupt:
