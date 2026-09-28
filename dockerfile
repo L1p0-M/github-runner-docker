@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     npm \
     gettext-base \
+    libatomic1 \
     iptables \
     fuse-overlayfs \
     && install -m 0755 -d /etc/apt/keyrings \
