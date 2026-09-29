@@ -17,35 +17,12 @@ def check_env():
     return True
 
 
-def install_runner():
-    if not os.path.exists("github-runner"):
-        os.makedirs("github-runner")
-    os.chdir("github-runner")
-
-    if os.path.exists("config.sh"):
-        print("Runner already extracted.")
-        return True
-   
-    url = os.environ.get("RUNNER_URL", "https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz")
-    output_file = "actions-runner-linux.tar.gz"
-    print("Downloading runner...")
-    with urllib.request.urlopen(url) as response, open(output_file, 'wb') as out_file:
-        shutil.copyfileobj(response, out_file)
-    print("Download complete!")
-    if os.path.exists(output_file):
-        print(f"Extracting {output_file}...")
-        with tarfile.open(output_file, "r:gz") as tar:
-            tar.extractall(path=".", filter='data')
-        if os.path.exists("config.sh"):
-            print("Runner extracted successfully.")
-            os.remove(output_file)
-            return True
-
 def config_runner():
     if is_configured():
         print("Runner is already configured!")
         return True
-    
+
+    os.chdir("/app/github-runner")
     github_token = os.environ.get("TOKEN")
     owner, repo = os.environ.get("REPO").split("/")
     token = get_token(owner=owner, repo=repo, token=github_token)
@@ -84,6 +61,7 @@ def run_runner():
         exit(1)
 
 def is_configured():
+    os.chdir("/app/github-runner")
     return os.path.exists(".runner")
 
 def get_token(owner, repo, token):
@@ -119,16 +97,6 @@ def cleanup_docker():
         print(f"Error during Docker cleanup: {e}")
         exit(1)
 
-def cleanup_tmp():
-    tmp_path = pathlibpath("/tmp")
-    for item in tmp_path.iterdir():
-        try:
-            if item.is_file() or item.is_symlink():
-                item.unlink()
-            elif item.is_dir():
-                shutil.rmtree(item)
-        except PermissionError:
-            pass
 
 if __name__ == "__main__":
     try:
@@ -141,22 +109,19 @@ if __name__ == "__main__":
         env_is_set = check_env()
         if env_is_set:
             print("Environment variables are set. Proceeding with the script.")
-            installed = install_runner()
-            if installed:
-                configured = config_runner()
-                if not configured:
-                    print("Runner configuration failed or runner was removed. Exiting.")
-                    exit(1)
-                try:
-                    run_runner()
-                except Exception as e:
-                    print(f"Error while running the Runner: {e}")
-                    exit(1)
-                finally:
-                    print("Cleaning up Docker resources...")
-                    cleanup_docker()
-                    cleanup_tmp()
-                    print("Cleanup complete.")
+            configured = config_runner()
+            if not configured:
+                print("Runner configuration failed or runner was removed. Exiting.")
+                exit(1)
+            try:
+                run_runner()
+            except Exception as e:
+                print(f"Error while running the Runner: {e}")
+                exit(1)
+            finally:
+                print("Cleaning up Docker resources...")
+                cleanup_docker()
+                print("Cleanup complete.")
 
     except KeyboardInterrupt:
         print("Script interrupted by user. Exiting.")

@@ -1,4 +1,6 @@
-FROM python:3.13.9-slim
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${BASE_IMAGE}
+
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -6,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     git \
     tini \
+    python3 \
+    python3-pip \
+    python3-venv \
     ca-certificates \
     libkrb5-3 \
     zlib1g \
@@ -24,9 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iptables \
     fuse-overlayfs \
     && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y --no-install-recommends \
     docker-ce-cli \
     docker-ce \
@@ -37,16 +42,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # renovate: datasource=github-releases depName=actions/runner
 ARG RUNNER_VERSION=2.337.0
-ENV RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
 
 ENV PYTHONUNBUFFERED=1
 COPY entrypoint.sh /entrypoint.sh
 RUN mkdir /app
 ADD runner.py /app
+
 WORKDIR /app
 RUN mkdir github-runner
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "amd64" ]; then RUNNER_ARCH="x64"; \
+    elif [ "$ARCH" = "arm64" ]; then RUNNER_ARCH="arm64"; \
+    else RUNNER_ARCH="x64"; fi && \
+    curl -o actions-runner.tar.gz -L https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz && \
+    tar -xzf ./actions-runner.tar.gz -C github-runner && \
+    rm actions-runner.tar.gz
 
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 
-CMD ["python", "/app/runner.py"]
+CMD ["python3", "/app/runner.py"]
