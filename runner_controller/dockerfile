@@ -1,4 +1,4 @@
-FROM python:3.13.9-alpine
+FROM python:3.14.8-alpine
 
 RUN apk add --no-cache gosu git tini docker-cli docker-cli-compose tzdata docker
 
