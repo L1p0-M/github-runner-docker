@@ -1,0 +1,23 @@
+---
+x-env: &env
+    PUID: {{ config.puid | default("1000") }}
+    PGID: {{ config.pgid | default("1000") }}
+    TOKEN: {{ config.token }}
+x-runner-template: &runner-base
+    image: ghcr.io/l1p0-m/github-runner-docker:v{{ config.version | default("latest") }}
+    privileged: true
+    restart: no
+{% if defaults.tmpfs_enabled is defined and defaults.tmpfs_enabled == true and defaults.tmpfs_size is defined %}
+    tmpfs:
+      - /var/lib/docker:exec,mode=777,size={{ defaults.tmpfs_size }}G
+{% endif %}
+services:
+{% if runner is defined %}
+    {{ runner.name }}:
+        <<: *runner-base
+        container_name: {{ runner.name }}
+        environment:
+            <<: *env
+            RUNNER_NAME: {{ runner.name }} 
+            REPO: {{ runner.repo }}
+{% endif %}
