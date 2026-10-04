@@ -4,13 +4,13 @@ PGID=${PGID:-1000}
 PACKAGES=${PACKAGES:-}
 set -e
 
-echo "Adding runner user.."
-if ! getent group runner >/dev/null; then
-    groupadd -g "$PGID" runner
+echo "[INFO] Setting IDs for Runner user.."
+if [ "$(id -g runner)" -ne "$PGID" ]; then
+    groupmod -o -g "$PGID" runner
 fi
 
-if ! id -u runner >/dev/null 2>&1; then
-    useradd -u "$PUID" -g "$PGID" -m -s /bin/bash runner
+if [ "$(id -u runner)" -ne "$PUID" ]; then
+    usermod -o -u "$PUID" runner
 fi
 
 if ! getent group docker >/dev/null; then
@@ -19,21 +19,14 @@ fi
 
 usermod -aG docker runner
 
-echo "Cleaning up old Docker processes and state..."
-pkill -9 dockerd || true
-pkill -9 containerd || true
-sleep 1
-
-rm -f /var/run/docker.pid /var/run/docker.sock /var/run/docker/containerd/containerd.pid
-
-echo "Starting Docker daemon..."
-dockerd --storage-driver=fuse-overlayfs > /var/log/dockerd.log 2>&1 &
+echo "[INFO] Starting Docker daemon..."
+dockerd --storage-driver=fuse-overlayfs > /var/log/docker.log 2>&1 &
 
 timeout 30 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'
 
 if ! docker info >/dev/null 2>&1; then
     echo "Error while starting the docker daemon!"
-    cat /var/log/dockerd.log
+    cat /var/log/docker.log
     exit 1
 fi
 
@@ -42,19 +35,20 @@ if [ -S /var/run/docker.sock ]; then
     chown root:docker /var/run/docker.sock
 fi
 
-echo "Docker daemon is running"
+echo "[INFO] Docker daemon is running"
 
 if [ -n "$PACKAGES" ]; then
-    echo "Installing user packages: $PACKAGES"
-    if apt-get update && apt-get install -y --no-install-recommends $(echo "$PACKAGES" | tr ',' ' '); then
+    echo "[INFO] Installing user packages: $PACKAGES"
+    if apt-get update && sudo apt-get install -y --no-install-recommends $(echo "$PACKAGES" | tr ',' ' '); then
         echo "Packages installed successfully."
         rm -rf /var/lib/apt/lists/*
     else
         echo "Error while trying to install user packages!!"
     fi
 else
-    echo "No need to install any extra package, continue"
+    echo "[INFO] No need to install any extra package, continue"
 fi
+
 chown -R runner:runner /app
 
 mkdir -p /home/runner/.local/bin
