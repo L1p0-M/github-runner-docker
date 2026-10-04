@@ -7,6 +7,7 @@ import asyncio
 import aiohttp
 
 
+
 async def check_env():
     if not os.environ.get("TOKEN"):
         print("Error: TOKEN environment variable is not set.")
