@@ -4,10 +4,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - 'VERSION'
-      - 'entrypoint.sh'
-      - 'dockerfile'
-      - 'runner.py'
+      - '/runner/**'
   workflow_dispatch:
     
 permissions:
@@ -37,7 +34,7 @@ jobs:
     - name: Read version from file
       id: get_version
       run: |
-        VERSION=$(cat VERSION)
+        VERSION=$(cat ./runner/VERSION)
         echo "version=$VERSION" >> $GITHUB_OUTPUT
     
     - name: Docker metadata
@@ -53,6 +50,8 @@ jobs:
     - name: Build and push
       uses: docker/build-push-action@v7
       with:
+        context: ./runner
+        file: ./runner/dockerfile
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ steps.meta.outputs.tags }}
