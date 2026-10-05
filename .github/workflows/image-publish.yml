@@ -1,4 +1,4 @@
-name: Docker Image CI
+name: Docker Image CI (Runner)
 
 on:
   push:
@@ -13,7 +13,19 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        include:
+          - os_name: "ubuntu-24.04"
+            base_image: "ubuntu:24.04"
+            tag: "ubuntu-24.04"
+          - os_name: "debian-latest"
+            base_image: "debian:latest"
+            tag: "debian-latest"
+          - os_name: "ubuntu-latest"
+            base_image: "ubuntu:latest"
+            tag: "ubuntu-latest"
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v7
@@ -44,8 +56,10 @@ jobs:
         images: ghcr.io/l1p0-m/github-runner-docker
         tags: |
           type=raw,value=latest
-          type=raw,value=${{ steps.get_version.outputs.version }}
-          type=raw,value=${{ steps.get_version.outputs.version }}-${{ github.sha }}
+          type=raw,value=${{ matrix.tag }}
+          type=raw,value=${{ matrix.tag }}-${{ steps.get_version.outputs.version }}
+          type=raw,value=${{ matrix.tag }}-${{ steps.get_version.outputs.version }}-${{ github.sha }}
+
 
     - name: Build and push
       uses: docker/build-push-action@v7
@@ -53,6 +67,8 @@ jobs:
         context: ./runner
         file: ./runner/dockerfile
         platforms: linux/amd64,linux/arm64
+        build-args: |
+          BASE_IMAGE=${{ matrix.base_image }}
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
