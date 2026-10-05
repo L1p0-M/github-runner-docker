@@ -21,9 +21,7 @@ RUN . /etc/os-release && \
     ca-certificates \
     libkrb5-3 \
     zlib1g \
-    liblttng-ust1t64 \
-    liblttng-ust-common1t64 \
-    liblttng-ust-ctl5t64 \
+    liblttng-ust-dev \
     libnuma1 \
     libicu-dev \
     rsync \
