@@ -4,7 +4,7 @@ x-env: &env
     PGID: {{ config.pgid | default("1000") }}
     TOKEN: {{ config.token }}
 x-runner-template: &runner-base
-    image: ghcr.io/l1p0-m/github-runner-docker:v{{ config.version | default("latest") }}
+    image: ghcr.io/l1p0-m/github-runner-docker:{{ image | default("ubuntu-latest") }}-v{{ config.version | default("latest") }}
     privileged: true
     restart: no
 {% if defaults.tmpfs_enabled is defined and defaults.tmpfs_enabled == true and defaults.tmpfs_size is defined %}

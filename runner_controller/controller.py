@@ -7,11 +7,111 @@ from jinja2 import Template, Environment, FileSystemLoader
 import json
 import tomllib
 from pathlib import Path as pathlibpath
+import logging
 
 
+log_level_env = os.environ.get('DEBUG', 'INFO').upper()
+log_level = getattr(logging, log_level_env, logging.INFO)
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("RunnerController")
 
-class RepoRunners:
-    def __init__(self, repo, name, min_idle=1, max_total=1, image="ghcr.io/l1p0-m/github-runner-docker:latest"):
+
+class GitHubAPI:
+    def __init__(self, repo):
+        self.etag = {}
+        self.queue = 0
+
+        self.urls = {
+            "runner": f"https://api.github.com/repos/{repo}/actions/runners",
+            "jobs": f"https://api.github.com/repos/{repo}/actions/runs?status=queued"
+        }
+
+        self.token = os.environ.get('TOKEN')
+        self.base_headers = {
+            "Authorization": f"token {self.token}",
+            "Accept": "application/vnd.github+json"
+        }
+
+    async def get_github_datas(self):
+
+        async def process_jobs(data, session):
+            runs = data.get("workflow_runs", [])              
+            total_queued_jobs = 0
+            for run in runs:
+                jobs_url = run.get("jobs_url")
+                headers = self.base_headers.copy()
+
+                if jobs_url in self.etag:
+                    headers["If-None-Match"] = self.etag[jobs_url]
+
+                try:
+                    async with session.get(jobs_url, headers=headers) as j_resp:
+                        if j_resp.status == 304:
+                            logger.debug(f"Got response 304, No changes in {self.repo}")
+                            continue
+
+                        if j_resp.status == 200:
+                            self.etag[jobs_url] = j_resp.headers.get("ETag")
+                            j_data = await j_resp.json()
+                            queued_jobs = [j for j in j_data.get("jobs", []) if j["status"] == "queued"]
+                            total_queued_jobs += len(queued_jobs)
+
+                except Exception as e:
+                    logger.error(f"Failed to get queued jobs for {self.repo}: {e}")
+            logger.debug(f"Remaining jobs: {total_queued_jobs}")
+            self.queue = total_queued_jobs
+
+        async def process_runner(data):
+            runners = data.get("runners", [])
+                                                                        
+            self.idle_count = sum(1 for r in runners if r["busy"] is False and r["status"] == "online")
+            self.total_count = len(runners)
+                                                                    
+            for runner in runners:
+                deployed_runners = self.runners
+                if runner["name"] in deployed_runners.keys():
+                    deployed_runners[f"{runner['name']}"].state = runner["status"] if runner["busy"] is False else "busy"                         
+        
+
+        to_check = ["runner", "jobs"]
+        async with aiohttp.ClientSession() as session:
+            for data_type in to_check:
+                headers = self.base_headers.copy()
+
+                if data_type in self.etag:
+                    headers["If-None-Match"] = self.etag[data_type]
+
+                try:
+                    async with session.get(self.urls[data_type], headers=headers) as resp:
+            
+                        if resp.status == 304:
+                            logger.debug(f"Got response 304, No changes in {self.repo} ({data_type})")
+                            continue
+            
+                        if resp.status == 200:
+                            logger.debug(f"Got response 200, Changes detected in {self.repo} ({data_type})")
+                            self.etag[data_type] = resp.headers.get("ETag")
+                            data = await resp.json()
+
+                            if data_type == "runner":
+                                await process_runner(data=data)
+                            elif data_type == "jobs":
+                                await process_jobs(data=data, session=session)
+
+                except Exception as e:
+                    logger.error(f"Error while talking to github's API: {e}")
+                    return False
+
+        return True
+
+
+class RepoRunners(GitHubAPI):
+    def __init__(self, repo, name, min_idle=1, max_total=1, image="ubuntu-latest"):
+        super().__init__(repo=repo)
         self.image = image
         self.repo = repo
         self.name = name
@@ -19,8 +119,8 @@ class RepoRunners:
         self.max_total = max_total
         self.idle_count = 0
         self.total_count = 0
-        self.etag = None
         self.runners = {}
+
 
     def to_dict(self):
         return {
@@ -50,19 +150,19 @@ class RepoRunners:
         to_delete = name
         if not name:
             for runner in self.runners.values():
-                if runner.state == "online" or runner.state == "preparing" or runner.state == "offline":
+                if runner.state in ("online", "preparing", "offline"):
                     to_delete = runner.name
                     break
 
         if not to_delete:
             return
 
-        print(f"[INFO] Removing {to_delete}")
+        logger.info(f"Removing {to_delete}")
         await self.runners[to_delete].deploy_compose(cmd=["down"])
         del self.runners[to_delete]
 
     async def stop(self):
-        print(f"[INFO] Stopping every runner for {self.repo}")
+        logger.info(f"Stopping every runner for {self.repo}")
         while self.runners != {}:
             await self.remove_runner()
         return True
@@ -93,21 +193,22 @@ class Runner:
             stdout, stderr = await process.communicate()
         
             if process.returncode == 0 and cmd != ["down"]:
-                print(f"[INFO] Sucessfully deployed: {self.compose_file_path}")
+                logger.info(f"Sucessfully deployed: {self.compose_file_path}")
                 return True
         
                     
             elif process.returncode == 0 and cmd == ["down"]:
-                print(f"[INFO] Sucessfully removed: {self.compose_file_path}")
+                logger.info(f"Sucessfully removed: {self.compose_file_path}")
                 return True
 
             else:
-                print(f"Error while deploying ({self.compose_file_path}): {stderr.decode()}")
+                logger.error(f"Error while deploying ({self.compose_file_path}): {stderr.decode()}")
                 return False
         
         except Exception as e:
-            print(f"Error while deploying ({self.compose_file_path}): {e}")
+            logger.error(f"Error while deploying ({self.compose_file_path}): {e}")
             return False
+
 
 
 class EventWatcher:
@@ -125,7 +226,7 @@ class EventWatcher:
             })
 
         subscriber = self.client.events.subscribe(filters=event_filters)
-        print("[INFO] Event watcher started...")
+        logger.info("Event watcher started...")
 
         try:
             while True:
@@ -142,12 +243,12 @@ class EventWatcher:
                 path_to_compose = attributes.get("com.docker.compose.project.config_files", None)
 
                 if action == "die" and image.startswith("ghcr.io/l1p0-m/github-runner-docker") and self.scale_down_event.is_set() is False:
-                    print(f"[INFO] Container {container_name} has died, triggering scale check...")
+                    logger.info(f"Container {container_name} has died, triggering scale check...")
                     self.died_container = path_to_compose
                     self.poll_event.set()
 
         except asyncio.CancelledError:
-            print("[INFO] Event watcher stopped")
+            logger.info("Event watcher stopped")
 
 
 class RunnerController:
@@ -158,6 +259,7 @@ class RunnerController:
         self.config = {}
         self.event_watcher = EventWatcher(self.client, self.poll_event, self.scale_down_event)
         self.matrix = {}
+        self.available_images = ["ubuntu-latest", "ubuntu-24.04", "debian-latest"]
         self.check_interval = 30  # seconds
 
 
@@ -179,18 +281,18 @@ class RunnerController:
                 await asyncio.gather(*self.tasks)
 
         except Exception as e:
-            print(f"Error: {e}")
+            logger.error(f"Error: {e}")
 
 
     async def stop(self, sig, tasks):
         try:
-            print(f"[INFO] ({sig.name}) - Stopping...")
+            logger.info(f"({sig.name}) - Stopping...")
 
             for task in tasks:
                 task.cancel()
 
             await asyncio.gather(*tasks, return_exceptions=True)
-            print("[INFO] Shutdown complete.")
+            logger.info("Shutdown complete.")
 
             for runner in self.matrix.values():
                 self.scale_down_event.set()
@@ -199,11 +301,11 @@ class RunnerController:
                 self.scale_down_event.clear()
 
         except Exception as e:
-            print("Error while stopping tasks")
+            logger.error("Error while stopping tasks")
         finally:
             if self.client:
                 await self.client.close()
-                print("[INFO] Docker socket connection closed")
+                logger.info("Docker socket connection closed")
 
 
     async def run_scale_loop(self, poll_event, poll_interval=30):
@@ -214,14 +316,14 @@ class RunnerController:
                 await asyncio.wait_for(poll_event.wait(), timeout=poll_interval)
 
             except asyncio.CancelledError:
-                print("[INFO] Scale loop stopped")
+                logger.info("Scale loop stopped")
                 raise
 
             except asyncio.TimeoutError:
                 pass
 
             except Exception as e:
-                print(f"Error: {e}")
+                logger.error(f"Error: {e}")
                 await asyncio.sleep(5)
 
             finally:
@@ -242,7 +344,7 @@ class RunnerController:
                     repo_name = runner.get("repo")
 
                     if not repo_name:
-                        print(f"Error: Repo is not defined in runner config: {runner}")
+                        logger.warning(f"Repo is not defined in runner config: {runner}")
                         continue
             
                     if not repo_name in self.matrix.keys():
@@ -251,76 +353,36 @@ class RunnerController:
                             max_total= runner.get("max_total", 1),
                             name= runner.get("name", "ci-runner"),
                             repo= repo_name,
-                            image= runner.get("image", "ghcr.io/l1p0/github-runner-docker:latest"))
+                            image= runner.get("image", None))
             
                 for repo in self.matrix.keys():
                     runner = self.matrix.get(repo, None)
-                    idle, total, etag = await self.check_github_status(repo_name=str(repo), etag=runner.etag if runner else None)
-                    if idle is not None and total is not None and etag:      
-                        runner.etag = etag
-                        runner.idle_count = idle
-                        runner.total_count = total
+                    await runner.get_github_datas()
             
                     old_name = runner.name
                     for num in range(runner.max_total):
                         runner.name = f"{old_name}-{num}"
 
                         if os.path.exists(f"/app/{repo}/{runner.name}.yaml"):
-                            print(f"[INFO] Compose file already exists for runner: {runner.name}, skipping creation...")
+                            logger.info(f"Compose file already exists for runner: {runner.name}, skipping creation...")
                             runner.name = old_name
                             continue
+
+                        image = self.config.get("defaults", {}).get("image", "ubuntu-latest") if not runner.image in self.available_images else runner.image
 
                         resp = await self.create_compose(params= {
                             "defaults": self.config.get("defaults", {}),
                             "runner": runner.to_dict(),
-                            "config": self.config.get("config", {})
+                            "config": self.config.get("config", {}),
+                            "image": image
                         })
                         runner.name = old_name
                         await asyncio.sleep(0.1)
 
 
         except Exception as e:
-            print(f"Error while bootstrapping: {e}")
+            logger.error(f"Error while bootstrapping: {e}")
 
-
-    async def check_github_status(self, repo_name: str, etag= None):
-        try:
-            headers = {
-                "Authorization": f"token {os.environ.get('TOKEN')}",
-                "Accept": "application/vnd.github+json"
-            }
-            if etag:
-                headers["If-None-Match"] = etag
-            url = f"https://api.github.com/repos/{repo_name}/actions/runners"
-            
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as resp:
-
-                    if resp.status == 304:
-                        return None, None, etag
-
-                    if resp.status == 200:
-                        etag = resp.headers.get("ETag")
-                        data = await resp.json()
-
-                        runners = data.get("runners", [])
-                        
-                        idle_count = sum(1 for r in runners if r["busy"] is False and r["status"] == "online")
-                        total_count = len(runners)
-
-                        for runner in runners:
-                            deployed_runners = self.matrix[repo_name].runners
-                            if runner["name"] in deployed_runners.keys():
-                                deployed_runners[f"{runner['name']}"].state = runner["status"] if runner["busy"] is False else "busy"
-
-
-                        return idle_count, total_count, etag
-            return None, None, etag
-        
-        except Exception as e:
-            print(f"Error while talking to github's API: {e}")
-            return None, None, etag
 
 
     async def get_runner_vars(self) -> bool:
@@ -359,7 +421,7 @@ class RunnerController:
                 died_name = str(pathlibpath(died).name).replace(".yaml", "")
 
                 if self.matrix[died_in_repo].min_idle >= self.matrix[died_in_repo].idle_count:
-                    print(f"[INFO] Container {died} found in repo: {died_in_repo}, restarting...")
+                    logger.debug(f"Container {died} found in repo: {died_in_repo}, restarting...")
                     await self.matrix[died_in_repo].add_runner(name=died_name)
                     self.event_watcher.died_container = None
 
@@ -372,30 +434,28 @@ class RunnerController:
             for repo in repo_name:
                 runner = self.matrix[repo]
 
-                idle, total, etag = await self.check_github_status(repo_name=repo, etag=runner.etag if runner else None)
-                if idle is not None and total is not None and etag:      
-                    runner.etag = etag
-                    runner.idle_count = idle
-                    runner.total_count = total
+                await runner.get_github_datas()
 
                 if (len(runner.runners) < runner.min_idle and runner.idle_count < runner.min_idle) and (len(runner.runners) < runner.max_total):
                     needed_runners = runner.min_idle - runner.idle_count
-                    for num in range(runner.min_idle - runner.idle_count):
+                    logger.debug(f"Needed runners: {needed_runners} for {repo}")
+                    for num in range(needed_runners):
                         await runner.add_runner()
                         await asyncio.sleep(1)
 
                 elif runner.idle_count > runner.min_idle:
                     needed_runners = runner.idle_count - runner.min_idle
+                    logger.debug(f"Needed runners: {needed_runners} for {repo}")
                     self.scale_down_event.set()
                     await runner.remove_runner()
                     self.scale_down_event.clear()
                 await asyncio.sleep(0.1)
 
         except asyncio.CancelledError:
-            print("Scale function stopped")
+            logger.info("Scale function stopped")
 
         except Exception as e:
-            print(f"Error while scaling runners: {e}")
+            logger.error(f"Error while scaling runners: {e}")
 
 
     async def create_compose(self, params= None):
@@ -423,21 +483,21 @@ class RunnerController:
                     return True
                 
             except Exception as e:
-                print(f"Error while creating compose file for runner: {runner_name}") 
+                logger.error(f"Error while creating compose file for runner: {runner_name}") 
                 return False
 
         if not os.path.exists("docker-compose.yaml.j2") and not params:
             return False
         
         if isinstance(params["runner"], dict) and not "repo" in params["runner"].keys():
-            print(f"Repo not found in config file for runner: {params["runner"]["name"]}")
+            logger.warning(f"Repo not found in config file for runner: {params["runner"]["name"]}")
             return False
 
         try:
             return await asyncio.to_thread(generate_files, params=params)
 
         except Exception as e:
-            print(f"Error creating compose file: {e}")
+            logger.error(f"Error creating compose file: {e}")
             return False
 
 
@@ -448,12 +508,12 @@ if __name__ == '__main__':
         asyncio.run(main)
 
     except KeyboardInterrupt:
-        print("Controller stopped by user")
+        logger.error("Controller stopped by user")
         exit(1)
 
     except asyncio.CancelledError:
         exit(1)
 
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
         exit(1)

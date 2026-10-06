@@ -6,7 +6,6 @@ RUN pip install --no-cache-dir aiodocker setuptools requests jinja2
 
 # renovate: datasource=github-releases depName=actions/runner
 ARG RUNNER_VERSION=2.337.0
-ENV RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
 ENV RUNNER_IMAGE_VERSION=${RUNNER_VERSION}
 
 ENV PYTHONUNBUFFERED=1
