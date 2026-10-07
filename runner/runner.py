@@ -1,7 +1,5 @@
 import os
 import subprocess
-import json
-from pathlib import Path as pathlibpath
 import signal
 import asyncio
 import aiohttp
@@ -15,7 +13,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("Runner")
-
 
 
 async def check_env():
@@ -74,20 +71,19 @@ async def unregister_runner():
     owner, repo = os.environ.get("REPO").split("/")
     token = await get_token(owner=owner, repo=repo, token=github_token, token_type="remove-token")
 
-
     config_cmd = [
         "/bin/bash",
         "./config.sh",
         "remove",
         "--token",
         str(token),
-        ]
+    ]
     try:
         proc = await asyncio.create_subprocess_exec(*config_cmd)
         await proc.wait()
         logger.info("Runner unregistered successfully.")
         return True
-    
+
     except subprocess.CalledProcessError as e:
         logger.error(f"Unregister failed with error code: {e.returncode}")
         return False
@@ -121,9 +117,11 @@ async def run_runner(stop_event):
     except Exception as e:
         logger.error(f"Error while running the Runner: {e}")
 
+
 async def is_configured():
     os.chdir("/app/github-runner")
     return os.path.exists(".runner")
+
 
 async def get_token(owner, repo, token, token_type="registration-token"):
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{token_type}"
@@ -147,6 +145,7 @@ async def get_token(owner, repo, token, token_type="registration-token"):
 
     except Exception as e:
         logger.error(f"Error getting token: {e}")
+
 
 async def main():
     try:
@@ -191,4 +190,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
         exit(1)
-
