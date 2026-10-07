@@ -8,6 +8,7 @@ import json
 import tomllib
 from pathlib import Path as pathlibpath
 import logging
+import time
 
 
 log_level_env = os.environ.get('DEBUG', 'INFO').upper()
@@ -150,7 +151,7 @@ class RepoRunners(GitHubAPI):
         to_delete = name
         if not name:
             for runner in self.runners.values():
-                if runner.state in ("online", "preparing", "offline"):
+                if runner.state in ("online"):
                     to_delete = runner.name
                     break
 
@@ -210,13 +211,13 @@ class Runner:
             return False
 
 
-
 class EventWatcher:
     def __init__(self, client, poll_event, scale_down_event):
         self.client = client
         self.poll_event = poll_event
         self.scale_down_event = scale_down_event
         self.died_container = None
+        self.last_die = time.time()
 
     async def watch_event_stream(self):
 
@@ -245,6 +246,7 @@ class EventWatcher:
                 if action == "die" and image.startswith("ghcr.io/l1p0-m/github-runner-docker") and self.scale_down_event.is_set() is False:
                     logger.info(f"Container {container_name} has died, triggering scale check...")
                     self.died_container = path_to_compose
+                    self.last_die = time.time()
                     self.poll_event.set()
 
         except asyncio.CancelledError:
@@ -309,11 +311,16 @@ class RunnerController:
 
 
     async def run_scale_loop(self, poll_event, poll_interval=30):
-
         while True:
-            await self.scale_runners()
+
+            poll_time = poll_interval
+            if int(time.time() - self.event_watcher.last_die) >= 300:
+                poll_time = 900
+                logger.debug(f"Last container died: {int(time.time() - self.event_watcher.last_die)}s ago... Polling timeout increased!")
+
+            await self.manage_runners()
             try:
-                await asyncio.wait_for(poll_event.wait(), timeout=poll_interval)
+                await asyncio.wait_for(poll_event.wait(), timeout=poll_time)
 
             except asyncio.CancelledError:
                 logger.info("Scale loop stopped")
@@ -384,7 +391,6 @@ class RunnerController:
             logger.error(f"Error while bootstrapping: {e}")
 
 
-
     async def get_runner_vars(self) -> bool:
 
         if not os.environ.get('TOKEN'):
@@ -411,51 +417,62 @@ class RunnerController:
         return False
 
     
-    async def scale_runners(self):
+    async def manage_runners(self):
         try:
             repo_name = list(self.matrix.keys())
-
-            died = self.event_watcher.died_container
-            if died:
-                died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
-                died_name = str(pathlibpath(died).name).replace(".yaml", "")
-
-                if self.matrix[died_in_repo].min_idle >= self.matrix[died_in_repo].idle_count:
-                    logger.debug(f"Container {died} found in repo: {died_in_repo}, restarting...")
-                    await self.matrix[died_in_repo].add_runner(name=died_name)
-                    self.event_watcher.died_container = None
-
-                else:
-                    self.scale_down_event.set()
-                    await self.matrix[died_in_repo].remove_runner(name=died_name)
-                    self.scale_down_event.clear()
-                    self.event_watcher.died_container = None
+            if await self.auto_recreate():
+                asyncio.sleep(5)
 
             for repo in repo_name:
-                runner = self.matrix[repo]
-
-                await runner.get_github_datas()
-
-                if (len(runner.runners) < runner.min_idle and runner.idle_count < runner.min_idle) and (len(runner.runners) < runner.max_total):
-                    needed_runners = runner.min_idle - runner.idle_count
-                    logger.debug(f"Needed runners: {needed_runners} for {repo}")
-                    for num in range(needed_runners):
-                        await runner.add_runner()
-                        await asyncio.sleep(1)
-
-                elif runner.idle_count > runner.min_idle:
-                    needed_runners = runner.idle_count - runner.min_idle
-                    logger.debug(f"Needed runners: {needed_runners} for {repo}")
-                    self.scale_down_event.set()
-                    await runner.remove_runner()
-                    self.scale_down_event.clear()
-                await asyncio.sleep(0.1)
+                await self.auto_scale(repo=repo)
 
         except asyncio.CancelledError:
             logger.info("Scale function stopped")
 
         except Exception as e:
             logger.error(f"Error while scaling runners: {e}")
+
+
+    async def auto_recreate(self):
+        died = self.event_watcher.died_container
+        if died:
+            died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
+            died_name = str(pathlibpath(died).name).replace(".yaml", "")
+
+            logger.debug(f"Container {died} found in repo: {died_in_repo}, restarting...")
+            await self.matrix[died_in_repo].add_runner(name=died_name)
+            self.event_watcher.died_container = None
+            return True
+        return False
+
+
+    async def auto_scale(self, repo):
+        runner = self.matrix[repo]
+        
+        await runner.get_github_datas()
+        
+        current_total = len(runner.runners)
+        busy_runners = sum(1 for r in runner.runners.values() if r.state == "busy")
+        preparing_count = sum(1 for r in runner.runners.values() if r.state == "preparing")
+        
+        needed_total = busy_runners + runner.queue + runner.min_idle
+        target_runner_count = min(needed_total, runner.max_total) - current_total
+        
+        if target_runner_count > 0:
+            logger.debug(f"Needed runners: {target_runner_count} for {repo}")
+            for num in range(target_runner_count):
+                await runner.add_runner()
+                await asyncio.sleep(1)
+        
+        elif target_runner_count < 0:
+            logger.debug(f"Needed runners: {target_runner_count} for {repo}")
+            self.scale_down_event.set()
+            for num in range(abs(target_runner_count)):
+                await runner.remove_runner()
+                await asyncio.sleep(1)
+            self.scale_down_event.clear()
+        await asyncio.sleep(0.1)
+        return
 
 
     async def create_compose(self, params= None):
