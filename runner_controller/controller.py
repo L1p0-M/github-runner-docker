@@ -439,7 +439,7 @@ class RunnerController:
             died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
             died_name = str(pathlibpath(died).name).replace(".yaml", "")
 
-            logger.debug(f"Container {died} found in repo: {died_in_repo}, restarting...")
+            logger.info(f"Container {died} found in repo: {died_in_repo}, restarting...")
             await self.matrix[died_in_repo].add_runner(name=died_name)
             self.event_watcher.died_container = None
             return True
@@ -465,7 +465,7 @@ class RunnerController:
                 await asyncio.sleep(1)
         
         elif target_runner_count < 0:
-            logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleign down!")
+            logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing down!")
             self.scale_down_event.set()
             for num in range(abs(target_runner_count)):
                 await runner.remove_runner()
