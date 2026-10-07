@@ -315,7 +315,7 @@ class RunnerController:
 
             poll_time = poll_interval
             if int(time.time() - self.event_watcher.last_die) >= 300:
-                poll_time = 900
+                poll_time = 120
                 logger.debug(f"Last container died: {int(time.time() - self.event_watcher.last_die)}s ago... Polling timeout increased!")
 
             await self.manage_runners()
@@ -421,7 +421,7 @@ class RunnerController:
         try:
             repo_name = list(self.matrix.keys())
             if await self.auto_recreate():
-                asyncio.sleep(5)
+                await asyncio.sleep(5)
 
             for repo in repo_name:
                 await self.auto_scale(repo=repo)
@@ -459,13 +459,13 @@ class RunnerController:
         target_runner_count = min(needed_total, runner.max_total) - current_total
         
         if target_runner_count > 0:
-            logger.debug(f"Needed runners: {target_runner_count} for {repo}")
+            logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing up!")
             for num in range(target_runner_count):
                 await runner.add_runner()
                 await asyncio.sleep(1)
         
         elif target_runner_count < 0:
-            logger.debug(f"Needed runners: {target_runner_count} for {repo}")
+            logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleign down!")
             self.scale_down_event.set()
             for num in range(abs(target_runner_count)):
                 await runner.remove_runner()
