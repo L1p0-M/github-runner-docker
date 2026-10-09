@@ -573,8 +573,8 @@ class RunnerController:
         if not os.path.exists("docker-compose.yaml.j2") and not params:
             return False
 
-        if not params.get("runner", None) and not isinstance(params["runner"], dict) and "repo" not in params["runner"].keys():
-            logger.warning(f"Repo not found in config file for runner: {params["runner"]["name"]}")
+        if not params and not isinstance(params["runner"], dict) and "repo" not in params["runner"].keys():
+            logger.warning(f"Repo not found in config file for runner: {params['runner']['name']}")
             return False
 
         try:
