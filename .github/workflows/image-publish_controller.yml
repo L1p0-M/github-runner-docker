@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - '/runner_controller/*'
+      - 'runner_controller/*'
   workflow_dispatch:
     
 permissions:
