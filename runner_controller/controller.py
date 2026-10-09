@@ -25,6 +25,7 @@ class GitHubAPI:
     def __init__(self, repo):
         self.etag = {}
         self.queue = 0
+        self.repo = repo
         self.session = aiohttp.ClientSession()
 
         self.urls = {
@@ -172,14 +173,17 @@ class RepoRunners(GitHubAPI):
         for runner in self.runners.values():
             if runner.state in states:
                 to_delete = runner.name
+                runner.state = "removing"
                 break
 
         if not to_delete:
             return
 
         logger.debug(f"Removing {to_delete}")
-        await self.runners[to_delete].deploy_compose(cmd=["down"])
-        del self.runners[to_delete]
+        if await self.runners[to_delete].deploy_compose(cmd=["down"]):
+            del self.runners[to_delete]
+        else:
+            self.runners[to_delete].state = "online"
 
     async def stop(self):
         logger.info(f"Stopping every runner for {self.repo}")
@@ -273,6 +277,22 @@ class EventWatcher:
 
         except asyncio.CancelledError:
             logger.info("Event watcher stopped")
+
+    async def get_running_containers(self, base_name, repo):
+        try:
+            containers = await self.client.containers.list()
+            found = []
+            for container in containers:
+                name = container["Names"][0].strip("/")
+                path = pathlibpath(f"/app/{repo}")
+                compose_path = pathlibpath(container["Labels"]["com.docker.compose.project.config_files"]).parent
+                print(name, compose_path == path)
+                if base_name in name and compose_path == path:
+                    found.append(name)
+            return found
+
+        except Exception as e:
+            logger.warning(f"Failed to get existing runners: {e}")
 
 
 class RunnerController:
@@ -395,6 +415,14 @@ class RunnerController:
 
                 for repo in self.matrix.keys():
                     runner = self.matrix.get(repo, None)
+
+                    found_names = await self.event_watcher.get_running_containers(base_name=runner.name, repo=runner.repo)
+                    if found_names != []:
+                        for found_name in found_names:
+                            exiting_runner = Runner(name=found_name, repo=repo)
+                            exiting_runner.state = "recovering"
+                            runner.runners[found_name] = exiting_runner
+
                     await runner.get_github_datas()
 
                     old_name = runner.name
