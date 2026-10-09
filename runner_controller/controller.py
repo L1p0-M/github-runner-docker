@@ -307,13 +307,13 @@ class EventWatcher:
             found = []
 
             for container in containers:
-                name = container.get("Names", [])
+                name = container["Names"]
                 if not name:
                     continue
                 name = name[0].strip("/")
 
                 path = pathlibpath(f"/app/{repo}")
-                compose_path = pathlibpath(container.get("Labels", {}).get("com.docker.compose.project.config_files")).parent
+                compose_path = pathlibpath(container["Labels"]["com.docker.compose.project.config_files"]).parent
 
                 if base_name in name and compose_path == path:
                     found.append(name)
@@ -503,10 +503,7 @@ class RunnerController:
         data["config"] = env_var_data
 
         self.config = data
-
-        if self.config == data:
-            return True
-        return False
+        return True
 
     async def manage_runners(self):
         """Check whether scaling or recreation is required and update the pool."""
