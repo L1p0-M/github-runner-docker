@@ -29,7 +29,7 @@ class GitHubAPI:
 
         self.urls = {
             "runner": f"https://api.github.com/repos/{repo}/actions/runners",
-            "jobs": f"https://api.github.com/repos/{repo}/actions/runs?status=queued"
+            "jobs": f"https://api.github.com/repos/{repo}/actions/runs?status=queued",
         }
 
         self.token = os.environ.get('TOKEN')
@@ -37,6 +37,25 @@ class GitHubAPI:
             "Authorization": f"token {self.token}",
             "Accept": "application/vnd.github+json"
         }
+
+    async def force_unregister_and_kill(self, runner):
+        try:
+            if not runner.id:
+                logger.debug(f"No need to unregister {runner.name}")
+                return True
+
+            url = f"https://api.github.com/repos/{self.repo}/actions/runners/{runner.id}"
+            async with self.session.delete(url=url, headers=self.base_headers) as resp:
+                if resp.status in [204, 200]:
+                    logger.debug(f"Runner {runner.name} deregistered via API: status {resp.status}")
+                    return True
+                else:
+                    logger.warning(f"Failed to unregister {runner.name} via API")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Failed to unregister {runner.name} via API: {e}")
+            return False
 
     async def get_github_datas(self):
 
@@ -69,6 +88,7 @@ class GitHubAPI:
 
         async def process_runner(data):
             runners = data.get("runners", [])
+            logger.debug(runners)
 
             self.idle_count = sum(1 for r in runners if r["busy"] is False and r["status"] == "online")
             self.total_count = len(runners)
@@ -77,6 +97,7 @@ class GitHubAPI:
                 deployed_runners = self.runners
                 if runner["name"] in deployed_runners.keys():
                     deployed_runners[f"{runner['name']}"].state = runner["status"] if runner["busy"] is False else "busy"
+                    deployed_runners[f"{runner['name']}"].id = runner["id"]
 
         to_check = ["runner", "jobs"]
         for data_type in to_check:
@@ -110,8 +131,9 @@ class GitHubAPI:
 
 
 class RepoRunners(GitHubAPI):
-    def __init__(self, repo, name, min_idle=1, max_total=1, image="ubuntu-latest"):
+    def __init__(self, repo, name, min_idle=1, max_total=1, image="ubuntu-latest", client=None):
         super().__init__(repo=repo)
+        self.client = client
         self.image = image
         self.repo = repo
         self.name = name
@@ -145,26 +167,27 @@ class RepoRunners(GitHubAPI):
         elif name and name in self.runners.keys():
             await self.runners[name].deploy_compose()
 
-    async def remove_runner(self, name=None):
-        to_delete = name
-        if not name:
-            for runner in self.runners.values():
-                if runner.state in ("online"):
-                    to_delete = runner.name
-                    break
+    async def remove_runner(self, states=["online"]):
+        to_delete = None
+        for runner in self.runners.values():
+            if runner.state in states:
+                to_delete = runner.name
+                break
 
         if not to_delete:
             return
 
-        logger.info(f"Removing {to_delete}")
+        logger.debug(f"Removing {to_delete}")
         await self.runners[to_delete].deploy_compose(cmd=["down"])
         del self.runners[to_delete]
 
     async def stop(self):
         logger.info(f"Stopping every runner for {self.repo}")
-        while self.runners != {}:
-            await self.remove_runner()
-            await asyncio.sleep(2)
+        for runner in self.runners.values():
+            if await self.force_unregister_and_kill(runner=runner):
+                container = await self.client.containers.get(runner.name)
+                await container.delete(force=True)
+        await self.session.close()
         return True
 
 
@@ -174,6 +197,7 @@ class Runner:
         self.repo = repo
         self.compose_file_path = f"/app/{repo}/{name}.yaml"
         self.state = "preparing"
+        self.id = None
 
     async def start(self):
         if not await self.deploy_compose():
@@ -256,6 +280,7 @@ class RunnerController:
         self.client = client
         self.poll_event = asyncio.Event()
         self.scale_down_event = asyncio.Event()
+        self.stop_event = asyncio.Event()
         self.config = {}
         self.event_watcher = EventWatcher(self.client, self.poll_event, self.scale_down_event)
         self.matrix = {}
@@ -268,42 +293,53 @@ class RunnerController:
                 self.client = aiodocker.Docker()
                 self.event_watcher.client = self.client
 
+                loop = asyncio.get_running_loop()
+                for sig in (signal.SIGTERM, signal.SIGINT):
+                    loop.add_signal_handler(
+                        sig,
+                        lambda s=sig: asyncio.create_task(self.stop(s))
+                    )
+
                 await self.bootstrap()
                 self.tasks = [
                     asyncio.create_task(self.run_scale_loop(poll_event=self.poll_event, poll_interval=self.check_interval)),
-                    asyncio.create_task(self.event_watcher.watch_event_stream())
+                    asyncio.create_task(self.event_watcher.watch_event_stream()),
+                    asyncio.create_task(self.stop_event.wait())
                 ]
-                loop = asyncio.get_running_loop()
-                for s in (signal.SIGINT, signal.SIGTERM):
-                    loop.add_signal_handler(s, lambda s=s: asyncio.create_task(self.stop(s, self.tasks)))
 
-                await asyncio.gather(*self.tasks)
+                done, pending = await asyncio.wait(
+                    [*self.tasks], return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if self.stop_event.is_set():
+                    logger.info("Stopping running tasks...")
+                    for task in pending:
+                        task.cancel()
+
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+                    logger.info("Stopping deployed runners...")
+                    stop_tasks = [runner.stop() for runner in self.matrix.values()]
+                    if stop_tasks:
+                        self.scale_down_event.set()
+                        await asyncio.gather(*stop_tasks, return_exceptions=True)
+                        self.scale_down_event.clear()
+
+        except asyncio.CancelledError:
+            logger.info("cancelled")
+            pass
 
         except Exception as e:
             logger.error(f"Error: {e}")
 
-    async def stop(self, sig, tasks):
-        try:
-            logger.info(f"({sig.name}) - Stopping...")
-
-            for task in tasks:
-                task.cancel()
-
-            await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info("Shutdown complete.")
-
-            for runner in self.matrix.values():
-                self.scale_down_event.set()
-                if await runner.stop():
-                    continue
-                self.scale_down_event.clear()
-
-        except Exception as e:
-            logger.error(f"Error while stopping tasks: {e}")
         finally:
             if self.client:
                 await self.client.close()
                 logger.info("Docker socket connection closed")
+
+    async def stop(self, sig):
+        logger.info(f"({sig.name}) - Stopping...")
+        self.stop_event.set()
 
     async def run_scale_loop(self, poll_event, poll_interval=30):
         while True:
@@ -354,7 +390,8 @@ class RunnerController:
                             max_total=runner.get("max_total", 1),
                             name=runner.get("name", "ci-runner"),
                             repo=repo_name,
-                            image=runner.get("image", None))
+                            image=runner.get("image", None),
+                            client=self.client)
 
                 for repo in self.matrix.keys():
                     runner = self.matrix.get(repo, None)
@@ -419,48 +456,58 @@ class RunnerController:
 
         except asyncio.CancelledError:
             logger.info("Scale function stopped")
+            raise
 
         except Exception as e:
             logger.error(f"Error while scaling runners: {e}")
 
     async def auto_recreate(self):
-        died = self.event_watcher.died_container
-        if died:
-            died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
-            died_name = str(pathlibpath(died).name).replace(".yaml", "")
+        try:
+            died = self.event_watcher.died_container
+            if died:
+                died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
+                died_name = str(pathlibpath(died).name).replace(".yaml", "")
 
-            logger.info(f"Container {died} found in repo: {died_in_repo}, restarting...")
-            await self.matrix[died_in_repo].add_runner(name=died_name)
-            self.event_watcher.died_container = None
-            return True
-        return False
+                logger.info(f"Container {died} found in repo: {died_in_repo}, restarting...")
+                await self.matrix[died_in_repo].add_runner(name=died_name)
+                self.event_watcher.died_container = None
+                return True
+            return False
+
+        except asyncio.CancelledError:
+            logger.info("Recreate function stopped")
 
     async def auto_scale(self, repo):
-        runner = self.matrix[repo]
+        try:
+            runner = self.matrix[repo]
 
-        await runner.get_github_datas()
+            await runner.get_github_datas()
 
-        current_total = len(runner.runners)
-        busy_runners = sum(1 for r in runner.runners.values() if r.state == "busy")
+            current_total = len(runner.runners)
+            busy_runners = sum(1 for r in runner.runners.values() if r.state == "busy")
 
-        needed_total = busy_runners + runner.queue + runner.min_idle
-        target_runner_count = min(needed_total, runner.max_total) - current_total
+            needed_total = busy_runners + runner.queue + runner.min_idle
+            target_runner_count = min(needed_total, runner.max_total) - current_total
 
-        if target_runner_count > 0:
-            logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing up!")
-            for num in range(target_runner_count):
-                await runner.add_runner()
-                await asyncio.sleep(1)
+            if target_runner_count > 0:
+                logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing up!")
+                for num in range(target_runner_count):
+                    await runner.add_runner()
+                    await asyncio.sleep(1)
 
-        elif target_runner_count < 0:
-            logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing down!")
-            self.scale_down_event.set()
-            for num in range(abs(target_runner_count)):
-                await runner.remove_runner()
-                await asyncio.sleep(1)
-            self.scale_down_event.clear()
-        await asyncio.sleep(0.1)
-        return
+            elif target_runner_count < 0:
+                logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing down!")
+                self.scale_down_event.set()
+                for num in range(abs(target_runner_count)):
+                    await runner.remove_runner()
+                    await asyncio.sleep(1)
+                self.scale_down_event.clear()
+            await asyncio.sleep(0.1)
+            return
+
+        except asyncio.CancelledError:
+            logger.info("Auto-Scale task stopped")
+            raise
 
     async def create_compose(self, params=None):
 
