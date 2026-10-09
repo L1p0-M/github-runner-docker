@@ -22,7 +22,10 @@ logger = logging.getLogger("RunnerController")
 
 
 class GitHubAPI:
+    """Manage GitHub Actions API access for a repository and track queued jobs."""
+
     def __init__(self, repo):
+        """Initialize the GitHub API client and repository metadata."""
         self.etag = {}
         self.queue = 0
         self.repo = repo
@@ -40,6 +43,7 @@ class GitHubAPI:
         }
 
     async def force_unregister_and_kill(self, runner):
+        """Deregister a runner from GitHub and remove its backing container."""
         try:
             if not runner.id:
                 logger.debug(f"No need to unregister {runner.name}")
@@ -59,8 +63,10 @@ class GitHubAPI:
             return False
 
     async def get_github_datas(self):
+        """Fetch GitHub runner and workflow queue data and update cached state."""
 
         async def process_jobs(data):
+            """Count queued workflow jobs from the GitHub workflow runs payload."""
             runs = data.get("workflow_runs", [])
             total_queued_jobs = 0
             for run in runs:
@@ -88,6 +94,7 @@ class GitHubAPI:
             self.queue = total_queued_jobs
 
         async def process_runner(data):
+            """Update the tracked runner metadata from the GitHub runners API response."""
             runners = data.get("runners", [])
             logger.debug(runners)
 
@@ -132,7 +139,10 @@ class GitHubAPI:
 
 
 class RepoRunners(GitHubAPI):
+    """Represent and manage the set of runners assigned to a repository."""
+
     def __init__(self, repo, name, min_idle=1, max_total=1, image="ubuntu-latest", client=None):
+        """Initialize a repository runner pool and store the Docker client reference."""
         super().__init__(repo=repo)
         self.client = client
         self.image = image
@@ -145,6 +155,7 @@ class RepoRunners(GitHubAPI):
         self.runners = {}
 
     def to_dict(self):
+        """Return a dictionary representation of the runner pool configuration."""
         return {
             "repo": self.repo,
             "name": self.name,
@@ -157,6 +168,7 @@ class RepoRunners(GitHubAPI):
         }
 
     async def add_runner(self, name=None):
+        """Create and start a new runner instance when the pool needs to scale up."""
         if not name:
             for num in range(self.max_total):
                 name = f"{self.name}-{num}"
@@ -169,6 +181,7 @@ class RepoRunners(GitHubAPI):
             await self.runners[name].deploy_compose()
 
     async def remove_runner(self, states=["online"]):
+        """Remove a runner from the pool when it matches the configured removal states."""
         to_delete = None
         for runner in self.runners.values():
             if runner.state in states:
@@ -186,6 +199,7 @@ class RepoRunners(GitHubAPI):
             self.runners[to_delete].state = "online"
 
     async def stop(self):
+        """Stop all runners in the pool and close the GitHub API session."""
         logger.info(f"Stopping every runner for {self.repo}")
         for runner in self.runners.values():
             if await self.force_unregister_and_kill(runner=runner):
@@ -196,7 +210,10 @@ class RepoRunners(GitHubAPI):
 
 
 class Runner:
+    """Represent a single GitHub Actions runner deployed via docker-compose."""
+
     def __init__(self, name, repo):
+        """Initialize a runner with its compose file location and state."""
         self.name = name
         self.repo = repo
         self.compose_file_path = f"/app/{repo}/{name}.yaml"
@@ -204,10 +221,12 @@ class Runner:
         self.id = None
 
     async def start(self):
+        """Start this runner by deploying its compose stack."""
         if not await self.deploy_compose():
             raise RuntimeError("Error while deploying runner")
 
     async def deploy_compose(self, cmd: list = ["up", "-d", "--force-recreate"]) -> bool:
+        """Run docker-compose with the provided command arguments for this runner."""
         try:
             process = await asyncio.create_subprocess_exec(
                 "docker",
@@ -238,7 +257,10 @@ class Runner:
 
 
 class EventWatcher:
+    """Watch Docker events and trigger scaling checks when runner containers die."""
+
     def __init__(self, client, poll_event, scale_down_event):
+        """Initialize the event watcher with Docker and control events."""
         self.client = client
         self.poll_event = poll_event
         self.scale_down_event = scale_down_event
@@ -246,7 +268,7 @@ class EventWatcher:
         self.last_die = time.time()
 
     async def watch_event_stream(self):
-
+        """Subscribe to Docker container events and signal a rescale when a runner dies."""
         event_filters = json.dumps({
             "type": ["container"],
             "event": ["die", "stop"]
@@ -279,6 +301,7 @@ class EventWatcher:
             logger.info("Event watcher stopped")
 
     async def get_running_containers(self, base_name, repo):
+        """Return the currently running containers that match a repository runner pattern."""
         try:
             containers = await self.client.containers.list()
             found = []
@@ -301,7 +324,10 @@ class EventWatcher:
 
 
 class RunnerController:
+    """Coordinate runner bootstrap, health checks, scaling, and shutdown logic."""
+
     def __init__(self, client=None):
+        """Initialize the controller, config state, and event-driven runner management."""
         self.client = client
         self.poll_event = asyncio.Event()
         self.scale_down_event = asyncio.Event()
@@ -313,6 +339,7 @@ class RunnerController:
         self.check_interval = 30  # seconds
 
     async def start(self):
+        """Start background tasks for scaling, Docker events, and shutdown handling."""
         try:
             if not self.client:
                 self.client = aiodocker.Docker()
@@ -363,10 +390,12 @@ class RunnerController:
                 logger.info("Docker socket connection closed")
 
     async def stop(self, sig):
+        """Handle shutdown signals by setting the stop event."""
         logger.info(f"({sig.name}) - Stopping...")
         self.stop_event.set()
 
     async def run_scale_loop(self, poll_event, poll_interval=30):
+        """Continuously evaluate runner scaling requirements and wait for polling events."""
         while True:
 
             poll_time = poll_interval
@@ -393,6 +422,7 @@ class RunnerController:
                 poll_event.clear()
 
     async def bootstrap(self):
+        """Load config, initialize repo runner pools, and create runner compose files."""
         try:
             sucess = await self.get_runner_vars()
             if not sucess:
@@ -454,7 +484,7 @@ class RunnerController:
             logger.error(f"Error while bootstrapping: {e}")
 
     async def get_runner_vars(self) -> bool:
-
+        """Load runner configuration and environment variables required for the controller."""
         if not os.environ.get('TOKEN'):
             raise RuntimeError("TOKEN needs to be configured!")
         if not os.path.exists("./config.toml"):
@@ -479,6 +509,7 @@ class RunnerController:
         return False
 
     async def manage_runners(self):
+        """Check whether scaling or recreation is required and update the pool."""
         try:
             repo_name = list(self.matrix.keys())
             if await self.auto_recreate():
@@ -495,6 +526,7 @@ class RunnerController:
             logger.error(f"Error while scaling runners: {e}")
 
     async def auto_recreate(self):
+        """Recreate a runner when a tracked container has unexpectedly died."""
         try:
             died = self.event_watcher.died_container
             if died:
@@ -511,6 +543,7 @@ class RunnerController:
             logger.info("Recreate function stopped")
 
     async def auto_scale(self, repo):
+        """Scale a repository's runner pool to satisfy queued jobs and minimum idle targets."""
         try:
             runner = self.matrix[repo]
 
@@ -543,8 +576,10 @@ class RunnerController:
             raise
 
     async def create_compose(self, params=None):
+        """Create the docker-compose YAML file for a runner using the Jinja template."""
 
         def generate_files(params):
+            """Render the compose YAML template and write it to disk for a runner."""
             runner = params.get("runner", {})
             repo = runner.get("repo", None)
             runner_name = runner.get("name", None)
