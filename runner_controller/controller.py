@@ -282,11 +282,16 @@ class EventWatcher:
         try:
             containers = await self.client.containers.list()
             found = []
+
             for container in containers:
-                name = container["Names"][0].strip("/")
+                name = container.get("Names", [])
+                if not name:
+                    continue
+                name = name[0].strip("/")
+
                 path = pathlibpath(f"/app/{repo}")
-                compose_path = pathlibpath(container["Labels"]["com.docker.compose.project.config_files"]).parent
-                print(name, compose_path == path)
+                compose_path = pathlibpath(container.get("Labels", {}).get("com.docker.compose.project.config_files")).parent
+
                 if base_name in name and compose_path == path:
                     found.append(name)
             return found
@@ -568,7 +573,7 @@ class RunnerController:
         if not os.path.exists("docker-compose.yaml.j2") and not params:
             return False
 
-        if isinstance(params["runner"], dict) and "repo" not in params["runner"].keys():
+        if not params.get("runner", None) and not isinstance(params["runner"], dict) and "repo" not in params["runner"].keys():
             logger.warning(f"Repo not found in config file for runner: {params["runner"]["name"]}")
             return False
 
