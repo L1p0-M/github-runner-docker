@@ -69,6 +69,10 @@ class GitHubAPI:
             """Count queued workflow jobs from the GitHub workflow runs payload."""
             runs = data.get("workflow_runs", [])
             total_queued_jobs = 0
+
+            if not runs:
+                return
+
             for run in runs:
                 jobs_url = run.get("jobs_url")
                 headers = self.base_headers.copy()
@@ -554,9 +558,11 @@ class RunnerController:
 
             if target_runner_count > 0:
                 logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing up!")
+                add_tasks = []
                 for num in range(target_runner_count):
-                    await runner.add_runner()
-                    await asyncio.sleep(1)
+                    add_tasks.append(asyncio.create_task(runner.add_runner()))
+                await asyncio.gather(*add_tasks)
+
 
             elif target_runner_count < 0:
                 logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing down!")
