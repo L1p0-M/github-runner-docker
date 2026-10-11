@@ -51,6 +51,7 @@ RUN useradd -m -s /bin/bash runner && \
 
 # renovate: datasource=github-releases depName=actions/runner
 ARG RUNNER_VERSION=2.337.0
+ENV RUNNER_VERSION=${RUNNER_VERSION}
 
 ENV PYTHONUNBUFFERED=1
 COPY entrypoint.sh /entrypoint.sh

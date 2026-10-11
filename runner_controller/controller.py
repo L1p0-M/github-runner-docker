@@ -31,6 +31,9 @@ class GitHubAPI:
         self.etag = {}
         self.queue = 0
         self.repo = repo
+        self.runners = {}
+        self.idle_count = 0
+        self.total_count = 0
         self.session = aiohttp.ClientSession()
 
         self.urls = {
@@ -360,6 +363,7 @@ class DockerClient:
 
         except Exception as e:
             logger.warning(f"Failed to get existing runners: {e}")
+            return False
 
     async def remove_container(self, name):
         """Delete a running container by name when it is no longer needed."""
@@ -434,7 +438,7 @@ class RunnerController:
                         elif isinstance(tasks_resp, list):
                             containers_to_kill.extend(tasks_resp)
 
-                    logger.debug(f"Killing cotainers: {containers_to_kill}")
+                    logger.debug(f"Killing containers: {containers_to_kill}")
                     if containers_to_kill:
                         kill_tasks = [self.dockerclient.remove_container(name=container_name) for container_name in containers_to_kill]
                         await asyncio.gather(*kill_tasks, return_exceptions=True)
