@@ -7,9 +7,9 @@ x-runner-template: &runner-base
     image: ghcr.io/l1p0-m/github-runner-docker:{{ image | default("ubuntu-latest") }}-v{{ config.version | default("latest") }}
     privileged: true
     restart: no
-{% if defaults.tmpfs_enabled is defined and defaults.tmpfs_enabled == true and defaults.tmpfs_size is defined %}
+{% if config.tmpfs_enabled is defined and config.tmpfs_enabled == true and config.tmpfs_size is defined %}
     tmpfs:
-      - /var/lib/docker:exec,mode=777,size={{ defaults.tmpfs_size }}G
+      - /var/lib/docker:exec,mode=777,size={{ config.tmpfs_size }}G
 {% endif %}
 services:
 {% if runner is defined %}
