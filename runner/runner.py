@@ -16,6 +16,7 @@ logger = logging.getLogger("Runner")
 
 
 async def check_env():
+    """Validate that the required GitHub environment variables are present before startup."""
     if not os.environ.get("TOKEN"):
         logger.error("TOKEN environment variable is not set.")
         exit(1)
@@ -26,6 +27,7 @@ async def check_env():
 
 
 async def config_runner():
+    """Configure the GitHub Actions runner and register it with the repository."""
     if await is_configured():
         logger.info("Runner is already configured!")
         return True
@@ -63,6 +65,7 @@ async def config_runner():
 
 
 async def unregister_runner():
+    """Remove the runner from GitHub if it is currently registered."""
     if not await is_configured():
         return True
     logger.info("Unregistering Runner!")
@@ -90,6 +93,7 @@ async def unregister_runner():
 
 
 async def run_runner(stop_event):
+    """Start the underlying GitHub runner process and stop it cleanly when the event is set."""
     logger.info("Starting runner...")
     try:
         cmd = ["/bin/bash", "./run.sh"]
@@ -119,11 +123,13 @@ async def run_runner(stop_event):
 
 
 async def is_configured():
+    """Return True when the runner has already been configured in the GitHub runner directory."""
     os.chdir("/app/github-runner")
     return os.path.exists(".runner")
 
 
 async def get_token(owner, repo, token, token_type="registration-token"):
+    """Request a GitHub registration or removal token for the target repository."""
     url = f"https://api.github.com/repos/{owner}/{repo}/actions/runners/{token_type}"
 
     headers = {
@@ -138,7 +144,7 @@ async def get_token(owner, repo, token, token_type="registration-token"):
             async with session.post(url=url, headers=headers) as response:
                 response_body = await response.json()
                 if response.status == 201:
-                    logger.debug(f"Token is valid until: {response_body.get("expires_at")}")
+                    logger.debug(f'Token is valid until: {response_body.get("expires_at")}')
                     return response_body.get("token")
                 else:
                     raise RuntimeError
@@ -148,6 +154,7 @@ async def get_token(owner, repo, token, token_type="registration-token"):
 
 
 async def main():
+    """Validate Docker, configure the runner, and keep it running until shutdown."""
     try:
         proc = await asyncio.create_subprocess_exec("docker", "--version")
         await proc.wait()
