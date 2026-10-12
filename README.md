@@ -1,94 +1,109 @@
-# 🐙 Ephemeral Self-Hosted GitHub Actions Runner Container
+# GitHub Actions Runner Orchestrator
 
-A lightweight, highly secure Docker-based self-hosted GitHub Actions runner with Docker-in-Docker (DinD) support, designed specifically for ephemeral execution (auto-deregistration after a single job).
-
----
-
-## 🚀 Key Features
-
-* **Ephemeral Engine:** Configured with --ephemeral mode. After executing 1 job, the runner automatically unregisters from GitHub, cleans up runtime secrets, and terminates (ensuring a 100% clean state for every CI/CD run).
-* **Docker-in-Docker (DinD):** Native support for running Docker commands (`docker build`, `docker run`, `docker-compose`) inside Actions workflows.
-* **Security First:** Drops root privileges on startup using `gosu` to execute tasks safely under an unprivileged runner user.
-* **Dynamic Package Injection:** Install extra APT packages on-the-fly at runtime without rebuilding the Docker image.
-* **Packages Included:** Pre-packaged with essential DevOps tools: `git`, `curl`, `rsync`, `ssh`, `envsubst`, `nodejs`, `npm`, `Docker CLI`, and `Buildx`.
+A robust, asynchronous Python-based orchestrator designed for homelab environments to manage ephemeral GitHub Actions runners efficiently via the Docker API. 
 
 ---
 
-## 🔄 Architecture & Ephemeral Lifecycle
+## Key Features
 
-```mermaid
-flowchart TD
-    A[Docker Container Starts] --> B[Fetch Registration Token]
-    B --> C[Execute ./config.sh --ephemeral]
-    C --> D[Start ./run.sh & Wait for Job]
-    D --> E[Execute Workflow Job]
-    E --> F[Job Complete ➔ GitHub Deregisters Runner & Cleans Config]
-    F --> G[Process Exits & Container Stops]
-    G --> H[Docker restart: unless-stopped Spawns Fresh Container]
-    H --> A
+* **Asynchronous Architecture:** Non-blocking concurrent event loops, GitHub API polling with **ETag caching**, and parallel task execution.
+* **Ephemeral Runners & Docker Event Monitoring:** Every runner is ephemeral and automatically destroyed after finishing a job. The orchestrator actively listens to real-time **Docker daemon events**, ensuring that if a runner container dies unexpectedly, it immediately cleans up and spawns a fresh, clean replacement if required.
+* **Smart State Recovery & Shutdown:** Intelligent startup synchronization recovers unkilled containers from previous runs, while graceful shutdown ensures active busy runners finish their jobs before cleanup.
+* **Security & Process Management:** 
+  * Runs on a lightweight **Alpine Linux** (`python:3.13.9-alpine`) base image.
+  * Uses **`tini` as PID 1** for proper signal handling and zombie process reaping.
+  * Drops privileges dynamically using **`gosu`** to match your custom `PUID`/`PGID`.
+
+---
+
+## Configuration (`config.toml`)
+
+Create a `config.toml` file in your project directory to define your default settings and repository-specific runner pools. 
+
+> **Supported Runner Images:** You can use any of the pre-configured base image tags: `debian-latest`, `ubuntu-latest`, or `ubuntu-24.04`.
+
+```toml
+[defaults]
+check_interval_seconds = 10
+tmpfs_enabled = true
+tmpfs_size = 16
+image = "debian-latest"
+
+[[runners]]
+name = "readme-runner"
+repo = "L1p0-M/L1p0-M"
+image = "ubuntu-latest"
+min_idle = 2
+max_total = 3
+
+[[runners]]
+name = "teszt-ci"
+repo = "L1p0-M/Homelab"
+image = "ubuntu-24.04"
+min_idle = 3
+max_total = 8
 ```
 
 ---
 
-## ⚙️ Environment Variables
+## Deployment
 
-| Variable | Required | Default | Description |
-| :--- | :---: | :---: | :--- |
-| TOKEN | Yes | - | Personal Access Token (PAT) or Fine-Grained Token with repo / actions:read_write permissions to request registration tokens. |
-| REPO | Yes | - | Target GitHub repository in owner/repository format (e.g. L1p0-M/Homelab). |
-| RUNNER_NAME | No | auto-generated | Custom name displayed in GitHub's Settings -> Actions -> Runners tab. |
-| PUID | No | 1000 | User ID (UID) assigned to the runner user inside the container for file permission alignment. |
-| PGID | No | 1000 | Group ID (GID) assigned to the runner user inside the container. |
-| PACKAGES | No | - | Comma-separated list of additional Debian packages to install via apt-get at container startup (e.g., wget, jq, htop). |
+Make sure you have your `config.toml` prepared and a valid GitHub Personal Access Token (`TOKEN`) with appropriate repository/admin permissions.
 
----
+### Option 1: Docker Compose (Recommended)
 
-## 🛠️ Quick Start
+```yaml
 
-### 1. Docker Run
+services:
+  runner-orchestrator:
+    image: ghcr.io/l1p0-m/github-runner-controller:latest
+    container_name: runner-orchestrator
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - DEBUG=info
+      - TZ=Europe/Budapest
+      - TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxx
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./config.toml:/app/config.toml
+```
+
+### Option 2: Docker Run
+
+If you prefer deploying via a raw Docker CLI command, use the following:
 
 ```bash
 docker run -d \
-  --privileged \
-  --name github-runner \
+  --name runner-orchestrator \
   --restart unless-stopped \
-  -e TOKEN="ghp_yourPersonalAccessTokenHere" \
-  -e REPO="L1p0-M/Homelab" \
-  -e RUNNER_NAME="pve-ephemeral-runner" \
   -e PUID=1000 \
   -e PGID=1000 \
-  -e PACKAGES="wget, jq, gettext-base" \
-  ghcr.io/l1p0-m/github-runner-docker:latest
-```
-
-### 2. Docker Compose (Recommended)
-
-Create a docker-compose.yml file:
-
-```yaml
-services:
-  github-runner:
-    image: ghcr.io/l1p0-m/github-runner-docker:latest
-    container_name: github-runner
-    privileged: true # Required for Docker-in-Docker functionality!
-    restart: unless-stopped
-    environment:
-      - TOKEN=${GITHUB_PAT_TOKEN}
-      - REPO=L1p0-M/Homelab
-      - RUNNER_NAME=pve-ephemeral-runner
-      - PUID=1000
-      - PGID=1000
-      - PACKAGES=wget, jq, gettext-base
-```
-
-Start the service:
-```bash
-docker compose up -d
+  -e DEBUG=info \
+  -e TZ=Europe/Budapest \
+  -e TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxx \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $(pwd)/config.toml:/app/config.toml \
+  ghcr.io/l1p0-m/github-runner-controller:latest
 ```
 
 ---
 
-## 🛡️ Security & Permissions
+## Environment Variables
 
-* **Privileged Mode:** The --privileged flag is required exclusively to initialize the Docker daemon inside the container for DinD workloads.
-* **Process Isolation:** The main entrypoint drops privileges immediately after setting up environment dependencies and runs the GitHub Actions runner binary strictly as a **non-root runner user** (PUID/PGID).
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `TOKEN` | GitHub Personal Access Token with repo/runner scopes. | **Required** |
+| `PUID` | User ID to run the orchestrator process inside the container. | `1000` |
+| `PGID` | Group ID to run the orchestrator process inside the container. | `1000` |
+| `DEBUG` | Logging level (`debug`, `info`, `warning`, `error`). | `info` |
+| `TZ` | Timezone for the container environment. | `UTC` |
+
+---
+
+## How It Works
+
+1. **Bootstrap & Sync:** On startup, the orchestrator reads the configuration, connects to the Docker daemon, and adopts any orphaned runner containers left behind from unexpected restarts.
+2. **Polling & Scaling:** It periodically queries the GitHub API (leveraging HTTP ETags to save rate limits) to monitor queued jobs and runner states, automatically scaling up or down based on `min_idle` and `max_total` constraints.
+3. **Event-Driven Lifecycle Management:** Runners execute single jobs and terminate. The orchestrator streams Docker events and GitHub API hooks to clean up unregistered instances instantly, automatically spinning up fresh replacements to maintain desired pool capacity without causing name collisions.
