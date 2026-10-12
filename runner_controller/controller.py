@@ -69,14 +69,99 @@ class GitHubAPI:
 
     async def get_github_datas(self):
         """Fetch runner and queued-job data from GitHub and update the cached state."""
+        try:
+            tasks = [
+                asyncio.create_task(self.update_queue()),
+                asyncio.create_task(self.update_runners())
+            ]
+            sucess = await asyncio.gather(*tasks, return_exceptions=True)
+            for resp_codes in sucess:
+                if isinstance(resp_codes, Exception):
+                    logger.error(f"API Call returned with error: {resp_codes}")
+                elif isinstance(resp_codes, bool) and resp_codes:
+                    logger.debug("API returned with sucess code")
+            return True
 
-        async def process_jobs(data):
-            """Count queued workflow jobs returned in the GitHub run payload."""
+        except Exception as e:
+            logger.error(f"Error while talking to github's API: {e}")
+            return False
+
+    async def update_runners(self):
+        headers = self.base_headers.copy()
+        if "runner" in self.etag:
+            headers["If-None-Match"] = self.etag["runner"]
+        try:
+            async with self.session.get(self.urls["runner"], headers=headers) as resp:
+                if resp.status == 304:
+                    logger.debug(f"Got response 304, No changes for runners in {self.repo}")
+                    return True
+        
+                if resp.status == 200:
+                    logger.debug(f"Got response 200, Changes detected for runners in {self.repo}")
+                    self.etag["runner"] = resp.headers.get("ETag")
+                    logger.debug(f"Saved ETag for runners: {self.etag["runner"]}")
+                    data = await resp.json()
+                    if data:
+                        await self.process_runner(data=data)
+
+        except Exception as e:
+            logger.error("Error while getting/processing runners data")
+            raise RuntimeError(e)
+
+    async def update_queue(self):
+        headers = self.base_headers.copy()
+        if "jobs" in self.etag:
+            headers["If-None-Match"] = self.etag["jobs"]
+        try:
+            async with self.session.get(self.urls["jobs"], headers=headers) as resp:
+                if resp.status == 304:
+                    logger.debug(f"Got response 304, No changes for jobs in {self.repo}")
+                    return True
+        
+                if resp.status == 200:
+                    logger.debug(f"Got response 200, Changes detected for jobs in {self.repo}")
+                    self.etag["jobs"] = resp.headers.get("ETag")
+                    logger.debug(f"Saved ETag for jobs: {self.etag["jobs"]}")
+                    data = await resp.json()
+                    if data:
+                        sucess = await self.process_jobs(data=data)
+                    return sucess
+
+        except Exception as e:
+            logger.error("Error while getting/processing jobs data")
+            raise RuntimeError(e)
+
+    async def process_runner(self, data):
+        """Update tracked runner status and IDs from the GitHub runners payload."""
+        runners = data.get("runners", [])
+        logger.debug(runners)
+
+        if not runners:
+            return False
+                    
+        self.idle_count = sum(1 for r in runners if r["busy"] is False and r["status"] == "online")
+        self.total_count = len(runners)
+                    
+        for runner in runners:
+            deployed_runners = self.runners
+            if runner["name"] in deployed_runners.keys():
+                deployed_runners[f"{runner['name']}"].state = runner["status"] if runner["busy"] is False else "busy"
+                deployed_runners[f"{runner['name']}"].id = runner["id"]
+                logger.debug(f"{runner["name"]} updated with state: {runner["status"] if runner["busy"] is False else "busy"}")
+
+        logger.debug(f"Updated data from API: idle: {self.idle_count}, total: {self.total_count}")
+        return True
+
+    async def process_jobs(self, data):
+        """Count queued workflow jobs returned in the GitHub run payload."""
+        try:
             runs = data.get("workflow_runs", [])
+            logger.debug(f"API respons for queued jobs: {data}")
             total_queued_jobs = 0
 
-            if not runs:
-                return
+            if int(data.get("total_count", 0)) == 0:
+                self.queue = 0
+                return True
 
             for run in runs:
                 jobs_url = run.get("jobs_url")
@@ -94,58 +179,20 @@ class GitHubAPI:
                         if j_resp.status == 200:
                             self.etag[jobs_url] = j_resp.headers.get("ETag")
                             j_data = await j_resp.json()
+                            logger.debug(f"Github returned data for jobs: {j_data.get("jobs", [])}")
                             queued_jobs = [j for j in j_data.get("jobs", []) if j["status"] == "queued"]
                             total_queued_jobs += len(queued_jobs)
 
                 except Exception as e:
-                    logger.error(f"Failed to get queued jobs for {self.repo}: {e}")
+                    logger.error(f"Failed to process queued jobs for {self.repo}: {e}")
+                    raise RuntimeError(e)
 
             logger.info(f"Remaining jobs: {total_queued_jobs}")
             self.queue = total_queued_jobs
+            return True
 
-        async def process_runner(data):
-            """Update tracked runner status and IDs from the GitHub runners payload."""
-            runners = data.get("runners", [])
-            logger.debug(runners)
-
-            self.idle_count = sum(1 for r in runners if r["busy"] is False and r["status"] == "online")
-            self.total_count = len(runners)
-
-            for runner in runners:
-                deployed_runners = self.runners
-                if runner["name"] in deployed_runners.keys():
-                    deployed_runners[f"{runner['name']}"].state = runner["status"] if runner["busy"] is False else "busy"
-                    deployed_runners[f"{runner['name']}"].id = runner["id"]
-
-        to_check = ["runner", "jobs"]
-        for data_type in to_check:
-            headers = self.base_headers.copy()
-
-            if data_type in self.etag:
-                headers["If-None-Match"] = self.etag[data_type]
-
-            try:
-                async with self.session.get(self.urls[data_type], headers=headers) as resp:
-
-                    if resp.status == 304:
-                        logger.debug(f"Got response 304, No changes in {self.repo} ({data_type})")
-                        continue
-
-                    if resp.status == 200:
-                        logger.debug(f"Got response 200, Changes detected in {self.repo} ({data_type})")
-                        self.etag[data_type] = resp.headers.get("ETag")
-                        data = await resp.json()
-
-                        if data_type == "runner":
-                            await process_runner(data=data)
-                        elif data_type == "jobs":
-                            await process_jobs(data=data)
-
-            except Exception as e:
-                logger.error(f"Error while talking to github's API: {e}")
-                return False
-
-        return True
+        except RuntimeError as e:
+            raise RuntimeError(e)
 
     async def session_stop(self):
         """Close the active GitHub API session when the controller is shutting down."""
