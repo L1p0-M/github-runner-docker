@@ -650,13 +650,18 @@ class RunnerController:
                     add_tasks.append(asyncio.create_task(runner.add_runner()))
                 await asyncio.gather(*add_tasks)
 
-            elif target_runner_count < 0:
-                logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing down!")
-                self.scale_down_event.set()
-                for num in range(abs(target_runner_count)):
-                    await runner.remove_runner()
-                    await asyncio.sleep(0.5)
-                self.scale_down_event.clear()
+            elif target_runner_count < 0 and not self.scale_down_event.is_set():
+                allowed_min_total = busy_runners + runner.min_idle
+                if current_total + target_runner_count < allowed_min_total:
+                    target_runner_count = allowed_min_total - current_total
+
+                if target_runner_count < 0:
+                    logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing down!")
+                    self.scale_down_event.set()
+                    for num in range(abs(target_runner_count)):
+                        await runner.remove_runner()
+                        await asyncio.sleep(0.5)
+                    self.scale_down_event.clear()
             await asyncio.sleep(0.1)
             return
 
