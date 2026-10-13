@@ -42,7 +42,7 @@ class Webserver:
             logger.info("Metrics server stopped")
 
         finally:
-            server.cleanup()
+            await server.cleanup()
 
 class GitHubAPI:
     """Manage GitHub Actions API access for a repository and track runner queue state."""
