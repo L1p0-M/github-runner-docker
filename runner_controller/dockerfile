@@ -2,7 +2,7 @@ FROM python:3.13.9-alpine
 
 RUN apk add --no-cache gosu git tini docker-cli docker-cli-compose tzdata docker
 
-RUN pip install --no-cache-dir aiodocker setuptools requests jinja2
+RUN pip install --no-cache-dir aiodocker setuptools requests jinja2 prometheus_client
 
 # renovate: datasource=github-releases depName=actions/runner
 ARG RUNNER_VERSION=2.337.0
@@ -15,6 +15,7 @@ ADD controller.py /app
 ADD docker-compose.yaml.j2 /app
 WORKDIR /app
 
+EXPOSE 8080
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
 

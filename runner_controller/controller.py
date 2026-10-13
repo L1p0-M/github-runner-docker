@@ -11,6 +11,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict
+from prometheus_client import Gauge
+from prometheus_client.aiohttp import make_aiohttp_handler
 
 
 log_level_env = os.environ.get('DEBUG', 'INFO').upper()
@@ -22,6 +24,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger("RunnerController")
 
+class Webserver:
+    def __init__(self):
+        self.app = aiohttp.web.Application()
+        self.app.router.add_get("/metrics", make_aiohttp_handler())
+
+    async def run(self):
+        server = aiohttp.web.AppRunner(self.app)
+        await server.setup()
+        site = aiohttp.web.TCPSite(server, '0.0.0.0', 8080)
+
+        try:
+            await site.start()
+            await asyncio.Event().wait()
+
+        except asyncio.CancelledError:
+            logger.info("Metrics server stopped")
+
+        finally:
+            server.cleanup()
 
 class GitHubAPI:
     """Manage GitHub Actions API access for a repository and track runner queue state."""
@@ -34,6 +55,8 @@ class GitHubAPI:
         self.runners = {}
         self.idle_count = 0
         self.total_count = 0
+        self.total_runners_metric = Gauge(name=f"total_runner_count", documentation="Count of runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
+        self.idle_count_metric = Gauge(name=f"idle_runner_count", documentation="Count of idle runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.session = aiohttp.ClientSession()
 
         self.urls = {
@@ -141,6 +164,8 @@ class GitHubAPI:
                     
         self.idle_count = sum(1 for r in runners if r["busy"] is False and r["status"] == "online")
         self.total_count = len(runners)
+        self.idle_count_metric.set(self.idle_count)
+        self.total_runners_metric.set(self.total_count)
                     
         for runner in runners:
             deployed_runners = self.runners
@@ -441,6 +466,7 @@ class RunnerController:
         self.stop_event = asyncio.Event()
         self.configloader = ConfigLoader(config_path="./config.toml", exit_event=self.stop_event)
         self.dockerclient = DockerClient(self.poll_event, self.scale_down_event)
+        self.metrics = Webserver()
         self.available_images = ["ubuntu-latest", "ubuntu-24.04", "debian-latest"]
         self.reporunners = None
 
@@ -459,6 +485,7 @@ class RunnerController:
             self.tasks = [
                 asyncio.create_task(self.run_scale_loop(poll_event=self.poll_event)),
                 asyncio.create_task(self.dockerclient.watch_event_stream()),
+                asyncio.create_task(self.metrics.run()),
                 asyncio.create_task(self.stop_event.wait())
             ]
 
