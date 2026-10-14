@@ -9,6 +9,7 @@ A robust, asynchronous Python-based orchestrator designed for homelab environmen
 * **Asynchronous Architecture:** Non-blocking concurrent event loops, GitHub API polling with **ETag caching**, and parallel task execution.
 * **Ephemeral Runners & Docker Event Monitoring:** Every runner is ephemeral and automatically destroyed after finishing a job. The orchestrator actively listens to real-time **Docker daemon events**, ensuring that if a runner container dies unexpectedly, it immediately cleans up and spawns a fresh, clean replacement if required.
 * **Smart State Recovery & Shutdown:** Intelligent startup synchronization recovers unkilled containers from previous runs, while graceful shutdown ensures active busy runners finish their jobs before cleanup.
+- **Observability & Metrics:** Built-in Prometheus metrics endpoint (`/metrics`) exposing real-time tracking for total runners, idle runners, and job counts broken down per configured repository.
 * **Security & Process Management:** 
   * Runs on a lightweight **Alpine Linux** (`python:3.13.9-alpine`) base image.
   * Uses **`tini` as PID 1** for proper signal handling and zombie process reaping.
@@ -65,6 +66,8 @@ services:
       - DEBUG=info
       - TZ=Europe/Budapest
       - TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxx
+    ports:
+      - 8080:8080 # Prometheus /metrics endpoint port
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./config.toml:/app/config.toml
@@ -78,6 +81,7 @@ If you prefer deploying via a raw Docker CLI command, use the following:
 docker run -d \
   --name runner-orchestrator \
   --restart unless-stopped \
+  -p 8080:8080 \
   -e PUID=1000 \
   -e PGID=1000 \
   -e DEBUG=info \
@@ -99,6 +103,30 @@ docker run -d \
 | `PGID` | Group ID to run the orchestrator process inside the container. | `1000` |
 | `DEBUG` | Logging level (`debug`, `info`, `warning`, `error`). | `info` |
 | `TZ` | Timezone for the container environment. | `UTC` |
+
+---
+
+## Monitoring & Metrics
+
+The orchestrator exposes a standard Prometheus metrics endpoint at `http://<host-ip>:8080/metrics`. 
+It tracks key performance and scaling indicators individually for each specified repository, including:
+- **Total Runner Count** (`total_runner_count`)
+- **Idle Runner Count** (`idle_runner_count`)
+- **Job/Queue Count** (`jobs_in_queue`)
+
+### Example Prometheus Configuration (`prometheus.yml`)
+
+Add the following scrape job to your `prometheus.yml` to start collecting metrics from the orchestrator:
+
+```yaml
+scrape_configs:
+  - job_name: 'github-runner-orchestrator'
+    static_configs:
+      - targets: ['<host-ip-or-container-name>:8080']
+    scrape_interval: 15s
+```
+
+And now you can easily start to visualize scaling behavior using `Grafana` dashboards.
 
 ---
 
