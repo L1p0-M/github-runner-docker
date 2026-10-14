@@ -23,6 +23,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("RunnerController")
+logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 
 class Webserver:
     def __init__(self):
@@ -55,6 +56,7 @@ class GitHubAPI:
         self.runners = {}
         self.idle_count = 0
         self.total_count = 0
+        self.job_queue_metric = Gauge(name=f"jobs_in_queue", documentation="Count of queued jobs in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.total_runners_metric = Gauge(name=f"total_runner_count", documentation="Count of runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.idle_count_metric = Gauge(name=f"idle_runner_count", documentation="Count of idle runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.session = aiohttp.ClientSession()
@@ -186,6 +188,7 @@ class GitHubAPI:
 
             if int(data.get("total_count", 0)) == 0:
                 self.queue = 0
+                self.job_queue_metric.set(self.queue)
                 return True
 
             for run in runs:
@@ -214,6 +217,7 @@ class GitHubAPI:
 
             logger.info(f"Remaining jobs: {total_queued_jobs}")
             self.queue = total_queued_jobs
+            self.job_queue_metric.set(self.queue)
             return True
 
         except RuntimeError as e:
