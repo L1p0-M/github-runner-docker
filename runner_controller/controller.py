@@ -149,8 +149,8 @@ class GitHubAPI:
                     logger.debug(f"Saved ETag for jobs: {self.etag["jobs"]}")
                     data = await resp.json()
                     if data:
-                        sucess = await self.process_jobs(data=data)
-                    return sucess
+                        success = await self.process_jobs(data=data)
+                    return success
 
         except Exception as e:
             logger.error("Error while getting/processing jobs data")
