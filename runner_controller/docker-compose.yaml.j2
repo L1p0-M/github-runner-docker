@@ -13,11 +13,11 @@ x-runner-template: &runner-base
 {% endif %}
 services:
 {% if runner is defined %}
-    {{ runner.name }}:
+    {{ name }}:
         <<: *runner-base
-        container_name: {{ runner.name }}
+        container_name: {{ name }}
         environment:
             <<: *env
-            RUNNER_NAME: {{ runner.name }} 
+            RUNNER_NAME: {{ name }} 
             REPO: {{ runner.repo }}
 {% endif %}

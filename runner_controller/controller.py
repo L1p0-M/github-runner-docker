@@ -1,6 +1,8 @@
 import signal
+from sys import exit
 import aiodocker
 import aiohttp
+import aiohttp.web
 import os
 import asyncio
 from jinja2 import Environment, FileSystemLoader
@@ -62,8 +64,9 @@ class GitHubAPI:
         self.session = aiohttp.ClientSession()
 
         self.urls = {
-            "runner": f"https://api.github.com/repos/{repo}/actions/runners",
-            "jobs": f"https://api.github.com/repos/{repo}/actions/runs?status=queued",
+            "runner": f"https://api.github.com/repos/{self.repo}/actions/runners",
+            "jobs": f"https://api.github.com/repos/{self.repo}/actions/runs?status=queued",
+            "registration": f"https://api.github.com/repos/{self.repo}/actions/runners/registration-token",
         }
 
         self.token = os.environ.get('TOKEN')
@@ -91,6 +94,21 @@ class GitHubAPI:
         except Exception as e:
             logger.error(f"Failed to unregister {runner.name} via API: {e}")
             return False
+
+    async def get_token(self):
+        """Request a GitHub registration token for the target repository."""
+        try:
+            async with self.session.post(url=self.urls.get("registration"), headers=self.base_headers) as resp:
+                    response_body = await resp.json()
+                    if resp.status == 201:
+                        logger.debug(f'Token is valid until: {response_body.get("expires_at")}')
+                        return response_body.get("token")
+                    else:
+                        logger.error(f"Unable to get registration token for repo: {self.repo}")
+                        return False
+
+        except Exception as e:
+            logger.error(f"Unable to get registration token for repo: {self.repo}: {e}")
 
     async def get_github_datas(self):
         """Fetch runner and queued-job data from GitHub and update the cached state."""
@@ -149,6 +167,12 @@ class GitHubAPI:
                     logger.debug(f"Saved ETag for jobs: {self.etag["jobs"]}")
                     data = await resp.json()
                     if data:
+                        # Remove cached job url etags
+                        if "jobs" in self.etag and "runner" in self.etag:
+                            self.etag = {
+                                "jobs": self.etag.get("jobs"),
+                                "runner": self.etag.get("runners")
+                            }
                         success = await self.process_jobs(data=data)
                     return success
 
@@ -162,6 +186,8 @@ class GitHubAPI:
         logger.debug(runners)
 
         if not runners:
+            self.idle_count_metric.set(0)
+            self.total_runners_metric.set(0)
             return False
                     
         self.idle_count = sum(1 for r in runners if r["busy"] is False and r["status"] == "online")
@@ -357,7 +383,7 @@ class DockerClient:
         self.client = None
         self.poll_event = poll_event
         self.scale_down_event = scale_down_event
-        self.died_container = None
+        self.died_container = set()
         self.last_die = time.time()
 
     async def connect(self):
@@ -401,7 +427,7 @@ class DockerClient:
 
                 if action == "die" and image.startswith("ghcr.io/l1p0-m/github-runner-docker") and self.scale_down_event.is_set() is False:
                     logger.info(f"Container {container_name} has died, triggering scale check...")
-                    self.died_container = path_to_compose
+                    self.died_container.add(path_to_compose)
                     self.last_die = time.time()
                     self.poll_event.set()
 
@@ -425,8 +451,11 @@ class DockerClient:
 
                 if repo:
                     path = pathlibpath(f"/app/{repo}")
+                    if not base_name in name:
+                        continue
+
                     compose_path = pathlibpath(container["Labels"]["com.docker.compose.project.config_files"]).parent
-                    if base_name in name and compose_path == path:
+                    if compose_path == path:
                         found.append(name)
 
                 else:
@@ -532,8 +561,9 @@ class RunnerController:
 
         finally:
             await self.dockerclient.close_connection()
-            for reporunner in self.reporunners.repos.values():
-                await reporunner.session_stop()
+            if hasattr(self, "reporunners") and isinstance(self.reporunners.repos, dict):
+                for reporunner in self.reporunners.repos.values():
+                    await reporunner.session_stop()
 
     async def stop(self, sig):
         """Handle shutdown signals by setting the stop event."""
@@ -606,23 +636,21 @@ class RunnerController:
 
                 await runner.get_github_datas()
 
-                old_name = runner.name
+                image = self.config.default_image if runner.image not in self.available_images else runner.image
+                logger.info(f"Using runner image: {image} for repo: {runner.repo}")
+
                 for num in range(runner.max_total):
-                    runner.name = f"{old_name}-{num}"
+                    compose_name = f"{runner.name}-{num}"
 
-                    if os.path.exists(f"/app/{runner.repo}/{runner.name}.yaml"):
-                        logger.info(f"Compose file already exists for runner: {runner.name}, skipping creation...")
-                        runner.name = old_name
-                        continue
-
-                    image = self.config.default_image if runner.image not in self.available_images else runner.image
+                    if os.path.exists(f"/app/{runner.repo}/{compose_name}.yaml"):
+                        logger.info(f"Compose file already exists for runner: {compose_name},  Recreating it...")
 
                     await self.create_compose(params={
                         "config": self.config,
                         "runner": runner.to_dict(),
-                        "image": image
+                        "image": image,
+                        "name": compose_name
                     })
-                    runner.name = old_name
                     await asyncio.sleep(0.1)
 
         except Exception as e:
@@ -647,14 +675,16 @@ class RunnerController:
     async def auto_recreate(self):
         """Recreate a runner when a tracked container has unexpectedly died."""
         try:
-            died = self.dockerclient.died_container
-            if died:
+            for died in self.dockerclient.died_container:
+                if not died:
+                    return False
+                
                 died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
                 died_name = str(pathlibpath(died).name).replace(".yaml", "")
 
                 logger.info(f"Container {died} found in repo: {died_in_repo}, restarting...")
                 await self.reporunners.repos[died_in_repo].add_runner(name=died_name)
-                self.dockerclient.died_container = None
+                self.dockerclient.died_container.remove(died)
                 return True
             return False
 
@@ -707,7 +737,7 @@ class RunnerController:
             """Render the compose YAML template and write it to disk for a runner."""
             runner = params.get("runner", {})
             repo = runner.get("repo", None)
-            runner_name = runner.get("name", None)
+            runner_name = params.get("name", None)
 
             env = Environment(
                 loader=FileSystemLoader("./"),

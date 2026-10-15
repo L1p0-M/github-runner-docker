@@ -1,6 +1,6 @@
 FROM python:3.13.9-alpine
 
-RUN apk add --no-cache gosu git tini docker-cli docker-cli-compose tzdata docker
+RUN apk add --no-cache gosu git tini docker-cli docker-cli-compose tzdata
 
 RUN pip install --no-cache-dir aiodocker setuptools requests jinja2 prometheus_client
 
