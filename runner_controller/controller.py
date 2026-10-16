@@ -171,7 +171,7 @@ class GitHubAPI:
                         if "jobs" in self.etag and "runner" in self.etag:
                             self.etag = {
                                 "jobs": self.etag.get("jobs"),
-                                "runner": self.etag.get("runners")
+                                "runner": self.etag.get("runner")
                             }
                         success = await self.process_jobs(data=data)
                     return success
