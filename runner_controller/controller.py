@@ -53,6 +53,8 @@ class GitHubAPI:
     def __init__(self, repo):
         """Initialize the GitHub API session, repository metadata, and endpoint URLs."""
         self.etag = {}
+        self.job_etags = {}
+        self.jobs_cached = {}
         self.queue = 0
         self.repo = repo
         self.runners = {}
@@ -167,12 +169,8 @@ class GitHubAPI:
                     logger.debug(f"Saved ETag for jobs: {self.etag["jobs"]}")
                     data = await resp.json()
                     if data:
-                        # Remove cached job url etags
-                        if "jobs" in self.etag and "runner" in self.etag:
-                            self.etag = {
-                                "jobs": self.etag.get("jobs"),
-                                "runner": self.etag.get("runner")
-                            }
+                        self.job_etags.clear() 
+                        self.jobs_cached.clear()
                         success = await self.process_jobs(data=data)
                     return success
 
@@ -214,6 +212,7 @@ class GitHubAPI:
 
             if int(data.get("total_count", 0)) == 0:
                 self.queue = 0
+                self.jobs_cached.clear()
                 self.job_queue_metric.set(self.queue)
                 return True
 
@@ -221,20 +220,23 @@ class GitHubAPI:
                 jobs_url = run.get("jobs_url")
                 headers = self.base_headers.copy()
 
-                if jobs_url in self.etag:
-                    headers["If-None-Match"] = self.etag[jobs_url]
+                if jobs_url in self.job_etags:
+                    headers["If-None-Match"] = self.job_etags[jobs_url]
 
                 try:
                     async with self.session.get(jobs_url, headers=headers) as j_resp:
                         if j_resp.status == 304:
                             logger.debug(f"Got response 304, No changes in {self.repo}")
+                            if jobs_url in self.jobs_cached:
+                                total_queued_jobs += self.jobs_cached[jobs_url]
                             continue
 
                         if j_resp.status == 200:
-                            self.etag[jobs_url] = j_resp.headers.get("ETag")
+                            self.job_etags[jobs_url] = j_resp.headers.get("ETag")
                             j_data = await j_resp.json()
                             logger.debug(f"Github returned data for jobs: {j_data.get("jobs", [])}")
                             queued_jobs = [j for j in j_data.get("jobs", []) if j["status"] == "queued"]
+                            self.jobs_cached[jobs_url] = len(queued_jobs)
                             total_queued_jobs += len(queued_jobs)
 
                 except Exception as e:
@@ -292,10 +294,15 @@ class RepoRunners(GitHubAPI):
                 if name not in self.runners.keys():
                     runner = Runner(name=name, repo=self.repo)
                     self.runners[name] = runner
-                    await self.runners[name].start()
-                    break
+                    return await self.runners[name].start()
+                return False
+
         elif name and name in self.runners.keys():
-            await self.runners[name].deploy_compose()
+            success = await self.runners[name].deploy_compose()
+            if not success:
+                self.runners.pop(name, None)
+                return False
+            return True
 
     async def remove_runner(self, states=["online"]):
         """Remove a runner from the pool when it matches the configured removal state."""
@@ -342,7 +349,9 @@ class Runner:
     async def start(self):
         """Deploy the runner compose stack and fail if the startup command does not succeed."""
         if not await self.deploy_compose():
-            raise RuntimeError("Error while deploying runner")
+            logger.error(f"Failed to deploy container for {self.name} in {self.repo}")
+            return False
+        return True
 
     async def deploy_compose(self, cmd: list = ["up", "-d", "--force-recreate"]) -> bool:
         """Run docker-compose with the provided command arguments for this runner."""
@@ -533,6 +542,10 @@ class RunnerController:
 
                 await asyncio.gather(*pending, return_exceptions=True)
 
+                if self.reporunners is None:
+                    logger.info("No runners to stop, exiting...")
+                    exit(1)
+
                 logger.info("Stopping deployed runners...")
                 stop_tasks = [runner.stop() for runner in self.reporunners.repos.values()]
                 if stop_tasks:
@@ -561,7 +574,7 @@ class RunnerController:
 
         finally:
             await self.dockerclient.close_connection()
-            if hasattr(self, "reporunners") and isinstance(self.reporunners.repos, dict):
+            if self.reporunners is not None:
                 for reporunner in self.reporunners.repos.values():
                     await reporunner.session_stop()
 
@@ -674,22 +687,35 @@ class RunnerController:
 
     async def auto_recreate(self):
         """Recreate a runner when a tracked container has unexpectedly died."""
-        try:
-            for died in self.dockerclient.died_container:
-                if not died:
-                    return False
-                
+        recreate_tasks, data = [], []
+        while self.dockerclient.died_container:
+            died = self.dockerclient.died_container.pop()
+            if not died:
+                continue
+
+            try:
                 died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
                 died_name = str(pathlibpath(died).name).replace(".yaml", "")
-
                 logger.info(f"Container {died} found in repo: {died_in_repo}, restarting...")
-                await self.reporunners.repos[died_in_repo].add_runner(name=died_name)
-                self.dockerclient.died_container.remove(died)
-                return True
+                task = self.reporunners.repos[died_in_repo].add_runner(name=died_name)
+            except (TypeError, ValueError, KeyError):
+                continue
+
+            recreate_tasks.append(task)
+            data.append((died_in_repo, died_name))
+
+        if not recreate_tasks:
             return False
 
-        except asyncio.CancelledError:
-            logger.info("Recreate function stopped")
+        success = await asyncio.gather(*recreate_tasks)
+        return_value = False
+        for (repo, name), response in zip(data, success):
+            if response:
+                logger.debug("Container recreated successfuly")
+                return_value = True
+                continue
+            logger.warning(f"Failed to recreate {name} in {repo}: {response}")
+        return return_value
 
     async def auto_scale(self, repo):
         """Scale a repository's runner pool to match queued jobs and minimum idle requirements."""
