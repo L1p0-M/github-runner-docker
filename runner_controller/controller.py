@@ -295,7 +295,7 @@ class RepoRunners(GitHubAPI):
                     runner = Runner(name=name, repo=self.repo)
                     self.runners[name] = runner
                     return await self.runners[name].start()
-             return False
+            return False
 
         elif name and name in self.runners.keys():
             success = await self.runners[name].deploy_compose()
