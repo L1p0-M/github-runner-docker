@@ -295,7 +295,7 @@ class RepoRunners(GitHubAPI):
                     runner = Runner(name=name, repo=self.repo)
                     self.runners[name] = runner
                     return await self.runners[name].start()
-                return False
+             return False
 
         elif name and name in self.runners.keys():
             success = await self.runners[name].deploy_compose()
@@ -697,7 +697,7 @@ class RunnerController:
                 died_in_repo = str(pathlibpath(died).relative_to("/app/").parent)
                 died_name = str(pathlibpath(died).name).replace(".yaml", "")
                 logger.info(f"Container {died} found in repo: {died_in_repo}, restarting...")
-                task = self.reporunners.repos[died_in_repo].add_runner(name=died_name)
+                task = asyncio.create_task(self.reporunners.repos[died_in_repo].add_runner(name=died_name))
             except (TypeError, ValueError, KeyError):
                 continue
 
