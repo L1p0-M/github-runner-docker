@@ -55,6 +55,10 @@ class GitHubAPI:
         self.etag = {}
         self.job_etags = {}
         self.jobs_cached = {}
+
+        # Add timeout to prevent blocking API calls
+        timeout = aiohttp.ClientTimeout(total=30)
+        self.session = aiohttp.ClientSession(timeout=timeout)
         self.queue = 0
         self.repo = repo
         self.runners = {}
@@ -63,7 +67,6 @@ class GitHubAPI:
         self.job_queue_metric = Gauge(name=f"jobs_in_queue", documentation="Count of queued jobs in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.total_runners_metric = Gauge(name=f"total_runner_count", documentation="Count of runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.idle_count_metric = Gauge(name=f"idle_runner_count", documentation="Count of idle runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
-        self.session = aiohttp.ClientSession()
 
         self.urls = {
             "runner": f"https://api.github.com/repos/{self.repo}/actions/runners",
@@ -144,11 +147,14 @@ class GitHubAPI:
                 if resp.status == 200:
                     logger.debug(f"Got response 200, Changes detected for runners in {self.repo}")
                     self.etag["runner"] = resp.headers.get("ETag")
-                    logger.debug(f"Saved ETag for runners: {self.etag["runner"]}")
+                    logger.debug(f"Saved ETag for runners: {self.etag['runner']}")
                     data = await resp.json()
                     if data:
                         await self.process_runner(data=data)
 
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout while fetching runners for {self.repo}")
+            return True
         except Exception as e:
             logger.error("Error while getting/processing runners data")
             raise RuntimeError(e)
@@ -161,12 +167,14 @@ class GitHubAPI:
             async with self.session.get(self.urls["jobs"], headers=headers) as resp:
                 if resp.status == 304:
                     logger.debug(f"Got response 304, No changes for jobs in {self.repo}")
+                    # Log the cached queue value so we can debug stale cache issues
+                    logger.debug(f"Using cached queue count: {self.queue} for {self.repo}")
                     return True
-        
+
                 if resp.status == 200:
                     logger.debug(f"Got response 200, Changes detected for jobs in {self.repo}")
                     self.etag["jobs"] = resp.headers.get("ETag")
-                    logger.debug(f"Saved ETag for jobs: {self.etag["jobs"]}")
+                    logger.debug(f"Saved ETag for jobs: {self.etag['jobs']}")
                     data = await resp.json()
                     if data:
                         self.job_etags.clear() 
@@ -174,8 +182,11 @@ class GitHubAPI:
                         success = await self.process_jobs(data=data)
                     return success
 
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout while fetching jobs for {self.repo}, using cached queue value: {self.queue}")
+            return True
         except Exception as e:
-            logger.error("Error while getting/processing jobs data")
+            logger.error(f"Error while getting/processing jobs data")
             raise RuntimeError(e)
 
     async def process_runner(self, data):
@@ -234,11 +245,14 @@ class GitHubAPI:
                         if j_resp.status == 200:
                             self.job_etags[jobs_url] = j_resp.headers.get("ETag")
                             j_data = await j_resp.json()
-                            logger.debug(f"Github returned data for jobs: {j_data.get("jobs", [])}")
+                            logger.debug(f"Github returned data for jobs: {j_data.get('jobs', [])}")
                             queued_jobs = [j for j in j_data.get("jobs", []) if j["status"] == "queued"]
                             self.jobs_cached[jobs_url] = len(queued_jobs)
                             total_queued_jobs += len(queued_jobs)
 
+                except asyncio.TimeoutError:
+                    logger.error(f"Timeout fetching jobs for run at {jobs_url}, skipping...")
+                    continue
                 except Exception as e:
                     logger.error(f"Failed to process queued jobs for {self.repo}: {e}")
                     raise RuntimeError(e)
@@ -248,6 +262,9 @@ class GitHubAPI:
             self.job_queue_metric.set(self.queue)
             return True
 
+        except asyncio.TimeoutError as e:
+            logger.error(f"Timeout processing jobs for {self.repo}, keeping cached queue value: {self.queue}")
+            return True
         except RuntimeError as e:
             raise RuntimeError(e)
 
@@ -733,6 +750,8 @@ class RunnerController:
 
             needed_total = busy_runners + runner.queue + runner.min_idle
             target_runner_count = min(needed_total, runner.max_total) - current_total
+
+            logger.debug(f"auto_scale {repo}: queue={runner.queue}, busy={busy_runners}, idle={runner.idle_count}, total={current_total}, max={runner.max_total}, needed_total={needed_total}, target={target_runner_count}")
 
             if target_runner_count > 0:
                 logger.info(f"Needed runners: {target_runner_count} for {repo}, Scaleing up!")
