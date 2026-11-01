@@ -153,6 +153,9 @@ class GitHubAPI:
                     if data:
                         await self.process_runner(data=data)
 
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout while fetching runners for {self.repo}")
+            return True
         except Exception as e:
             logger.error("Error while getting/processing runners data")
             raise RuntimeError(e)
