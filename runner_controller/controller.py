@@ -67,7 +67,6 @@ class GitHubAPI:
         self.job_queue_metric = Gauge(name=f"jobs_in_queue", documentation="Count of queued jobs in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.total_runners_metric = Gauge(name=f"total_runner_count", documentation="Count of runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
         self.idle_count_metric = Gauge(name=f"idle_runner_count", documentation="Count of idle runners in the Repo", namespace="runner_controller", subsystem=f"{repo.replace('/', '_')}")
-        self.session = aiohttp.ClientSession()
 
         self.urls = {
             "runner": f"https://api.github.com/repos/{self.repo}/actions/runners",
@@ -148,7 +147,7 @@ class GitHubAPI:
                 if resp.status == 200:
                     logger.debug(f"Got response 200, Changes detected for runners in {self.repo}")
                     self.etag["runner"] = resp.headers.get("ETag")
-                    logger.debug(f"Saved ETag for runners: {self.etag["runner"]}")
+                    logger.debug(f"Saved ETag for runners: {self.etag['runner']}")
                     data = await resp.json()
                     if data:
                         await self.process_runner(data=data)
