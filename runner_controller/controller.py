@@ -294,7 +294,11 @@ class RepoRunners(GitHubAPI):
                 if name not in self.runners.keys():
                     runner = Runner(name=name, repo=self.repo)
                     self.runners[name] = runner
-                    return await self.runners[name].start()
+                    success = await self.runners[name].start()
+                    if not success:
+                        self.runners.pop(name, None)
+                        return False
+                    return True
             return False
 
         elif name and name in self.runners.keys():
